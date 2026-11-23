@@ -1,5 +1,7 @@
 # GPU Diag — diagnose intermittent monitor drop-outs (Windows)
 
+**Русская документация:** [README.md](README.md)
+
 A small PowerShell toolkit for Windows 10/11 that helps find why a monitor
 occasionally loses signal (black screen / "no signal") while the GPU is under load.
 
@@ -9,7 +11,7 @@ settings changes.
 
 ## Quick start
 
-1. Unpack `GPU-Diag-for-friend.zip` (do not run from inside the archive).
+1. Unpack `GPU-Diag.zip` (do not run from inside the archive).
 2. Double-click `START-HERE.bat`, accept the UAC prompt.
 3. Menu `1` = DO EVERYTHING (report + fixes + background logging). Nothing else to press,
    no reboot required.
@@ -57,7 +59,24 @@ with GPU/CPU/PCIe context at that moment). If the column set changes after an up
 `gpu-watch.csv` is renamed to `gpu-watch-<timestamp>.csv` (kept, and packed into the ZIP)
 instead of being overwritten.
 
+The engine folder is write-restricted to Administrators at install time (the user keeps
+read/execute and can delete it), because the task runs that script elevated. This stops
+casual or accidental replacement, not a determined local attacker: the profile owner can
+always restore their own permissions.
+
 Note: active window titles end up in the CSV — review before sharing the archive.
+
+## Uninstall
+
+Nothing is installed as a service or driver. To remove everything:
+
+1. `START-HERE.bat` → menu `4` — stops logging and removes the `GPU-Diag-Watch` task.
+2. Menu `6` — restores every changed setting to its original value.
+3. Delete `%LOCALAPPDATA%\GPU-Diag` (logs, fix backup, engine copy).
+4. Delete the unpacked folder with `START-HERE.bat`.
+
+If the folder is already gone but the task remains, run as administrator:
+`schtasks /Delete /TN GPU-Diag-Watch /F`. No reboot needed.
 
 ## Build the distributable
 
@@ -65,7 +84,7 @@ Note: active window titles end up in the CSV — review before sharing the archi
 .\build.ps1
 ```
 
-Produces `dist\GPU-Diag-for-friend.zip` (folder `GPU-Diag` with three files).
+Produces `dist\GPU-Diag.zip` (folder `GPU-Diag` with three files).
 
 ## Self-test
 

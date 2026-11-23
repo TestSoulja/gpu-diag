@@ -1,4 +1,4 @@
-# build.ps1 — собирает dist\GPU-Diag-for-friend.zip для отправки
+# build.ps1 - builds dist\GPU-Diag.zip for distribution
 [CmdletBinding()]
 param(
     [string]$OutDir = ''
@@ -32,7 +32,7 @@ $m = Select-String -Path (Join-Path $src 'GPU-Diag.ps1') -Pattern "Version\s*=\s
 if ($m -and $m.Matches.Count -gt 0) { $version = $m.Matches[0].Groups[1].Value }
 
 New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
-$zip = Join-Path $OutDir 'GPU-Diag-for-friend.zip'
+$zip = Join-Path $OutDir 'GPU-Diag.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
 Compress-Archive -Path $folder -DestinationPath $zip -Force
 Remove-Item $stage -Recurse -Force -ErrorAction SilentlyContinue

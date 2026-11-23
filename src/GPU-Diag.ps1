@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5.1'
+$script:Version        = '1.5.2'
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -500,6 +500,28 @@ function Install-Engine {
         $res.Path = $SourcePath
     }
     return $res
+}
+
+function Protect-EngineFolder {
+    # Best-effort hardening: the logger runs elevated from this folder, so let only
+    # Administrators/SYSTEM write it. The user keeps read/execute and can still delete it.
+    param([string]$Path)
+    if (-not $Path -or -not (Test-Path $Path)) { return $false }
+    try {
+        $sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User
+        $inherit = [System.Security.AccessControl.InheritanceFlags]'ContainerInherit, ObjectInherit'
+        $prop    = [System.Security.AccessControl.PropagationFlags]::None
+        $acl = Get-Acl $Path
+        $acl.SetAccessRuleProtection($true, $false)
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-32-544')), 'FullControl', $inherit, $prop, 'Allow')))
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule(
+            (New-Object System.Security.Principal.SecurityIdentifier('S-1-5-18')), 'FullControl', $inherit, $prop, 'Allow')))
+        $rights = [System.Security.AccessControl.FileSystemRights]'ReadAndExecute, Delete, DeleteSubdirectoriesAndFiles'
+        $acl.AddAccessRule((New-Object System.Security.AccessControl.FileSystemAccessRule($sid, $rights, $inherit, $prop, 'Allow')))
+        Set-Acl -Path $Path -AclObject $acl -ErrorAction Stop
+        return $true
+    } catch { return $false }
 }
 
 function Stop-WatchProcesses {
@@ -1592,6 +1614,9 @@ function Invoke-InstallWatch {
     if ($eng.Copied)   { Say ('  logger copied to: ' + $eng.Path) }
     elseif ($eng.Kept) { Say ('  newer logger already installed: ' + $eng.Path) }
     else               { Say ('  running the logger from: ' + $eng.Path) }
+    if (Protect-EngineFolder -Path $EngineDir) {
+        Say '  logger folder: write access restricted to administrators'
+    }
 
     $taskArg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $eng.Path + '" -Mode Watch'
     $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArg

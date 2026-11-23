@@ -10,7 +10,8 @@
                 power settings, graphics registry, event logs (TDR / WHEA /
                 Kernel-Power 41 / BugCheck), live kernel dumps, minidumps,
                 current GPU load per process, nvidia-smi live values,
-                autostart + overclock software. Produces a ZIP to send back.
+                autostart + overclock software. Produces a case ZIP:
+                report + telemetry for whoever analyses the problem.
     * Watch   : lightweight background logger (runs at every logon via a
                 scheduled task) that records GPU telemetry every 5 s and
                 every relevant system event. Catches the moment of the drop.
@@ -30,7 +31,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5.2'
+$script:Version        = '1.5.3'
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -1182,9 +1183,10 @@ function Get-RuStepText {
         'mpo' {
             return @(
                 'MPO — способ вывода картинки в Windows; на видеокартах NVIDIA он',
-                'иногда даёт чёрные вспышки. Сама ничего не меняй: если проблема',
-                'останется после переустановки драйвера, покажи этот файл тому,',
-                'кто помогает — там меняется одна настройка (OverlayTestMode = 5).')
+                'иногда даёт чёрные вспышки. Самостоятельно это менять не нужно:',
+                'если проблема останется после переустановки драйвера, покажи этот',
+                'файл тому, кто помогает — там меняется одна настройка',
+                '(OverlayTestMode = 5).')
         }
         'refresh' {
             return @(
@@ -1286,7 +1288,9 @@ function New-RuAdviceText {
         L '    чёрный экран, исправлены — всё обратимо.'
         L '  - Запись работает сама: после перезагрузки включать ничего не нужно.'
         L '  - От тебя нужно одно: когда монитор снова погаснет — запустить'
-        L '    инструмент ещё раз, нажать 4 и прислать ZIP с Рабочего стола.'
+        L '    инструмент ещё раз, нажать 4 и забрать с Рабочего стола новый ZIP.'
+        L '    Этот ZIP — материалы для разбора: передай его тому, кто помогает'
+        L '    (подробно — в разделе «КОМУ ПЕРЕДАТЬ ZIP» ниже).'
     } elseif ($FixStatus -eq 'applied' -and $WatchStatus -eq 'session') {
         L '  - Настройки исправлены, отчёт собран.'
         L '  - Запись работает только до выключения компьютера: задачу не удалось'
@@ -1303,6 +1307,15 @@ function New-RuAdviceText {
         L '  - Чтобы инструмент реально помог, запусти START-HERE.bat и нажми 1:'
         L '    он сам исправит настройки, включит запись и всё объяснит здесь же.'
     }
+    L ''
+
+    L 'ЧТО ТЫ ПОЛУЧИШЬ'
+    L ''
+    L '  Для себя — этот файл, ACTION-RU.txt: разбор простыми словами,'
+    L '  что нашлось, что уже исправлено и что делать дальше.'
+    L ''
+    L '  Для разбора — ZIP на Рабочем столе: полный отчёт и все записи.'
+    L '  Подробный состав архива — в разделе «ЧТО ВНУТРИ ZIP» ниже.'
     L ''
 
     $med  = @($items | Where-Object { $_.Sev -eq 'MEDIUM' })
@@ -1414,11 +1427,47 @@ function New-RuAdviceText {
     L '  - Не покупай новый блок питания наугад: сначала проверь кабель и порт.'
     L ''
 
-    L 'ЧТО ОТПРАВИТЬ ОБРАТНО'
+    L 'ЧТО ВНУТРИ ZIP'
     L ''
-    L '  ZIP-файл с Рабочего стола целиком: в нём report.txt и логи.'
-    L '  И напиши, в какое время монитор погас — это самый полезный факт.'
-    L '  Фоновую запись останавливать не надо, пока проблему не поймали.'
+    L '  Файл на Рабочем столе:'
+    L '    GPU-DIAG-<имя компьютера>-<дата>-<время>.zip'
+    L ''
+    L '  Внутри:'
+    L '    report.txt                полный отчёт для разбора: видеокарта'
+    L '                              и драйвер, мониторы и подключения,'
+    L '                              питание, настройки Windows, события'
+    L '                              журнала, раздел FINDINGS с выводами;'
+    L '    ACTION-RU.txt             этот же разбор простыми словами;'
+    L '    watch\gpu-watch.csv       запись каждые 5 секунд: температура,'
+    L '                              загрузка, частоты, питание, PCIe, мониторы;'
+    L '    watch\thermal.csv         температура и частота процессора, каждые 5 с;'
+    L '    watch\events.log          только системные события в моменты сбоев:'
+    L '                              TDR, WHEA, Kernel-Power 41, синие экраны;'
+    L '    watch\state.json          служебная отметка, до какого места'
+    L '                              прочитан журнал;'
+    L '    System.evtx               журнал Windows за последние дни, если'
+    L '                              хватило прав администратора;'
+    L '    minidumps\                дампы синих экранов, если они были;'
+    L '    live-kernel-reports.txt   список отчётов LiveKernelEvent 141/117;'
+    L '    GPU-Diag.ps1              программа, которая всё это собрала.'
+    L ''
+    L '  Часть файлов появляется только после фоновой записи: если записи'
+    L '  ещё не было, в ZIP будет только отчёт — это нормально.'
+    L ''
+
+    L 'КОМУ ПЕРЕДАТЬ ZIP'
+    L ''
+    L '  Если программу дал тебе другой человек — отправь ZIP туда же:'
+    L '  в тот же чат или на ту же почту, откуда пришла программа.'
+    L '  Целиком, не переименовывая: внутри report.txt и все записи.'
+    L ''
+    L '  Если ты запускаешь её для себя — ZIP и есть готовый отчёт. Покажи'
+    L '  его тому, кто будет чинить компьютер, или приложи к обращению'
+    L '  в сервисный центр. Открывать архив не нужно.'
+    L ''
+    L '  И добавь одну строку: в какое время монитор погас. Это самый'
+    L '  полезный факт для разбора. Фоновую запись останавливать не надо,'
+    L '  пока проблему не поймали.'
     L ''
 
     if ($items.Count -gt 0) {
@@ -1499,10 +1548,11 @@ function New-DiagPackage {
         Say (" Report + logs packed into:") 
         Say ("   $zip")
         Say ''
-        Say ' SEND THAT ZIP FILE BACK. It contains report.txt and everything else needed.'
+        Say ' This ZIP is the case package: report.txt, event log and telemetry.'
+        Say ' Hand it to whoever is helping with the diagnosis (same chat/mail).'
     } else {
         Say (" Folder with all files: $zip")
-        Say ' Send the whole folder back.'
+        Say ' Hand this folder to whoever is helping with the diagnosis.'
     }
     $ruFile = Write-RuAdvice -ZipPath $zip -FixStatus 'none'
     Say ''
@@ -1888,8 +1938,11 @@ function Invoke-All {
     Say ' ================================================================'
     Say '  ГОТОВО. Больше ничего делать не нужно.'
     Say '  На Рабочем столе:'
-    Say '    ACTION-RU.txt  - что найдено и что делать (по-русски)'
-    Say ("    " + $(if ($zip) { Split-Path $zip -Leaf } else { 'ZIP' }) + "  - отправь этот файл обратно")
+    Say '    ACTION-RU.txt  - разбор для тебя простыми словами (прочитай)'
+    Say ("    " + $(if ($zip) { Split-Path $zip -Leaf } else { 'ZIP' }) + "  - материалы для разбора")
+    Say ''
+    Say '  ZIP нужно передать тому, кто будет разбираться:'
+    Say '  в тот же чат или на ту же почту, откуда пришла программа.'
     Say ''
     if ($script:WatchState -eq 'ok') {
         Say '  Запись включена и после перезагрузки запустится сама.'
@@ -1921,7 +1974,7 @@ function Show-Menu {
         Say '  1  DO EVERYTHING    / сделать всё сразу'
         Say '  2  Full report only / только отчёт (ничего не меняет)'
         Say '  3  Turn ON logging  / включить фоновую запись'
-        Say '  4  Stop + final ZIP / остановить запись и собрать ZIP'
+        Say '  4  Stop + final ZIP / остановить запись и собрать ZIP с материалами'
         Say '  5  Apply fixes only / только исправления'
         Say '  6  Undo fixes       / отменить исправления'
         Say '  0  Exit             / выход'

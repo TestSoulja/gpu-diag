@@ -15,11 +15,13 @@ settings changes.
 2. Double-click `START-HERE.bat`, accept the UAC prompt.
 3. Menu `1` = DO EVERYTHING (report + fixes + background logging). Nothing else to press,
    no reboot required.
-4. The Desktop gets `ACTION-RU.txt` (plain-Russian verdict and next steps) and the ZIP to send back.
+4. The Desktop gets `ACTION-RU.txt` (plain-Russian verdict and next steps) and the ZIP
+   with the case package: report, event log and telemetry.
 5. Use the PC normally; logging restarts by itself after every logon.
-6. When it happens again: run the tool, menu `4`, send the new ZIP.
+6. When it happens again: run the tool, menu `4`, hand the new ZIP to whoever is
+   helping you.
 
-Menu: `1` do everything · `2` report only · `3` start logging · `4` stop logging + final ZIP
+Menu: `1` do everything · `2` report only · `3` start logging · `4` stop logging + case ZIP
 · `5` apply fixes · `6` undo fixes · `0` exit.
 
 ## What it collects
@@ -39,7 +41,8 @@ the tool never changes HAGS, MPO or the refresh rate itself.
 
 Output ends with a `FINDINGS` section ranked HIGH/MEDIUM/LOW/INFO. The same data is rendered
 for the PC owner as `ACTION-RU.txt` on the Desktop (and inside the ZIP): plain Russian,
-ranked causes, numbered next steps, what was already fixed automatically, what to send back.
+ranked causes, numbered next steps, what was already fixed automatically, and who to hand
+the ZIP to. The same file lists every ZIP entry and what it is for.
 
 ## What the fixes change (all reversible)
 

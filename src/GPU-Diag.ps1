@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.2'
+$script:Version        = '1.3'
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
 if (-not $OutRoot) { $OutRoot = Join-Path ([Environment]::GetFolderPath('Desktop')) 'GPU-DIAG' }
@@ -1022,7 +1022,7 @@ function New-DiagPackage {
     Say '============================== FINDINGS =============================='
     if ($script:Findings.Count -eq 0) {
         Say ' Nothing obviously wrong found in the static data.'
-        Say ' Run the background monitoring (menu 2) to catch the moment of the drop-out.'
+        Say ' Run the background monitoring (menu 3) to catch the moment of the drop-out.'
     } else {
         foreach ($f in $script:Findings) { Say (' ' + $f) }
     }
@@ -1158,7 +1158,7 @@ function Invoke-InstallWatch {
     Say (" Logs: " + $LogDir)
     Say ' Leave the PC running normally. When the monitor drops out again, the'
     Say ' moment and the GPU values around it will be recorded.'
-    Say ' Then choose menu 3 (stop + final report) and send the ZIP.'
+    Say ' Then choose menu 4 (stop + final report) and send the ZIP.'
 }
 
 function Invoke-UninstallWatch {

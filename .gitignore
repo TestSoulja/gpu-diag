@@ -1,0 +1,20 @@
+# build output
+dist/
+*.zip
+
+# tool output that must never be committed
+selftest.log
+watch-errors.log
+gpu-watch.csv
+thermal.csv
+events.log
+state.json
+stop.flag
+fix-backup.json
+GPU-DIAG/
+
+# Windows / editors
+Thumbs.db
+desktop.ini
+*.tmp
+.vscode/settings.json

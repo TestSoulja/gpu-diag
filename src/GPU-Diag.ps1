@@ -31,7 +31,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5.3'
+$script:Version        = '1.5.4'
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -1185,7 +1185,7 @@ function Get-RuStepText {
                 'MPO — способ вывода картинки в Windows; на видеокартах NVIDIA он',
                 'иногда даёт чёрные вспышки. Самостоятельно это менять не нужно:',
                 'если проблема останется после переустановки драйвера, покажи этот',
-                'файл тому, кто помогает — там меняется одна настройка',
+                'файл специалисту — там меняется одна настройка',
                 '(OverlayTestMode = 5).')
         }
         'refresh' {
@@ -1289,8 +1289,13 @@ function New-RuAdviceText {
         L '  - Запись работает сама: после перезагрузки включать ничего не нужно.'
         L '  - От тебя нужно одно: когда монитор снова погаснет — запустить'
         L '    инструмент ещё раз, нажать 4 и забрать с Рабочего стола новый ZIP.'
-        L '    Этот ZIP — материалы для разбора: передай его тому, кто помогает'
-        L '    (подробно — в разделе «КОМУ ПЕРЕДАТЬ ZIP» ниже).'
+        L '    Это твой отчёт (подробно — в разделе «ЧТО ДЕЛАТЬ С АРХИВОМ»).'
+        L '  - Если за 1–2 недели обычной работы ничего не повторилось —'
+        L '    настройки помогли. Делать больше ничего не нужно, новый архив'
+        L '    собирать не надо.'
+        L '  - Если экран мигнул и картинка вернулась сама — это тоже сбой:'
+        L '    нажми 4, соберётся новый архив. Он понадобится, если проблему'
+        L '    придётся разбирать дальше.'
     } elseif ($FixStatus -eq 'applied' -and $WatchStatus -eq 'session') {
         L '  - Настройки исправлены, отчёт собран.'
         L '  - Запись работает только до выключения компьютера: задачу не удалось'
@@ -1455,19 +1460,16 @@ function New-RuAdviceText {
     L '  ещё не было, в ZIP будет только отчёт — это нормально.'
     L ''
 
-    L 'КОМУ ПЕРЕДАТЬ ZIP'
+    L 'ЧТО ДЕЛАТЬ С АРХИВОМ'
     L ''
-    L '  Если программу дал тебе другой человек — отправь ZIP туда же:'
-    L '  в тот же чат или на ту же почту, откуда пришла программа.'
-    L '  Целиком, не переименовывая: внутри report.txt и все записи.'
+    L '  Архив — это твой отчёт. Он остаётся у тебя на Рабочем столе:'
+    L '  хочешь — оставь себе, хочешь — покажи специалисту или знакомому.'
+    L '  Файл самодостаточен: открывать его и что-то добавлять не нужно,'
+    L '  просто отдай целиком.'
     L ''
-    L '  Если ты запускаешь её для себя — ZIP и есть готовый отчёт. Покажи'
-    L '  его тому, кто будет чинить компьютер, или приложи к обращению'
-    L '  в сервисный центр. Открывать архив не нужно.'
-    L ''
-    L '  И добавь одну строку: в какое время монитор погас. Это самый'
-    L '  полезный факт для разбора. Фоновую запись останавливать не надо,'
-    L '  пока проблему не поймали.'
+    L '  Когда монитор погаснет — запиши время: это самый полезный факт'
+    L '  для разбора. Фоновую запись останавливать не надо, пока'
+    L '  проблему не поймали.'
     L ''
 
     if ($items.Count -gt 0) {
@@ -1548,11 +1550,11 @@ function New-DiagPackage {
         Say (" Report + logs packed into:") 
         Say ("   $zip")
         Say ''
-        Say ' This ZIP is the case package: report.txt, event log and telemetry.'
-        Say ' Hand it to whoever is helping with the diagnosis (same chat/mail).'
+        Say ' This ZIP is your report: report.txt, event log and telemetry.'
+        Say ' Keep it, or show it to a technician — it is self-contained.'
     } else {
         Say (" Folder with all files: $zip")
-        Say ' Hand this folder to whoever is helping with the diagnosis.'
+        Say ' This folder is your report — keep it or show it to a technician.'
     }
     $ruFile = Write-RuAdvice -ZipPath $zip -FixStatus 'none'
     Say ''
@@ -1722,7 +1724,7 @@ function Invoke-InstallWatch {
     Say (" Logs: " + $LogDir)
     Say ' Leave the PC running normally. When the monitor drops out again, the'
     Say ' moment and the GPU values around it will be recorded.'
-    Say ' Then choose menu 4 (stop + final report) and send the ZIP.'
+    Say ' Then choose menu 4 (stop + final report): the ZIP is your updated report.'
 }
 
 function Invoke-UninstallWatch {
@@ -1941,8 +1943,7 @@ function Invoke-All {
     Say '    ACTION-RU.txt  - разбор для тебя простыми словами (прочитай)'
     Say ("    " + $(if ($zip) { Split-Path $zip -Leaf } else { 'ZIP' }) + "  - материалы для разбора")
     Say ''
-    Say '  ZIP нужно передать тому, кто будет разбираться:'
-    Say '  в тот же чат или на ту же почту, откуда пришла программа.'
+    Say '  ZIP — это твой отчёт: оставь его у себя или покажи специалисту.'
     Say ''
     if ($script:WatchState -eq 'ok') {
         Say '  Запись включена и после перезагрузки запустится сама.'

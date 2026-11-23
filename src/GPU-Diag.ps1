@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
   GPU / DISPLAY PROBLEM DIAGNOSTICS
   ------------------------------------------------------------------
@@ -30,9 +30,11 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.3'
+$script:Version        = '1.4'
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
+$EngineDir             = Join-Path $LogDir 'engine'
+$EngineScript          = Join-Path $EngineDir 'GPU-Diag.ps1'
 if (-not $OutRoot) { $OutRoot = Join-Path ([Environment]::GetFolderPath('Desktop')) 'GPU-DIAG' }
 
 # power setting GUIDs (used instead of localized aliases)
@@ -78,6 +80,7 @@ if (-not $isAdmin -and $Mode -ne 'Watch' -and -not $env:GPU_DIAG_NOELEVATE) {
 # ----------------------------------------------------------------------------
 $script:Rep      = New-Object System.Collections.Generic.List[string]
 $script:Findings = New-Object System.Collections.Generic.List[string]
+$script:WatchState = 'unknown'
 
 function W      { param([string]$Text = '') $script:Rep.Add($Text) }
 function Hdr    { param([string]$Text) W ''; W ('-' * 78); W ('  ' + $Text); W ('-' * 78) }
@@ -442,6 +445,50 @@ function Get-ThermalSample {
         if ($p) { $load = $p.PercentProcessorTime; $mhz = $p.ProcessorFrequency; $pct = $p.PercentofMaximumFrequency }
     } catch { }
     return ('{0},{1},{2},{3},{4}' -f $stamp, $temp, $load, $mhz, $pct)
+}
+
+function Get-ScriptVersion {
+    param([string]$Path)
+    if (-not (Test-Path $Path)) { return $null }
+    try {
+        $m = Select-String -Path $Path -Pattern "Version\s*=\s*'([0-9.]+)'" -ErrorAction Stop | Select-Object -First 1
+        if ($m) { return [version]$m.Matches[0].Groups[1].Value }
+    } catch { }
+    return $null
+}
+
+# the logger must survive reboots and folder clean-ups, so it runs from a stable
+# copy under %LOCALAPPDATA%\GPU-Diag\engine instead of the unpacked folder
+function Install-Engine {
+    param([string]$SourcePath = $PSCommandPath)
+    $res = [pscustomobject]@{ Path = $EngineScript; Copied = $false; Kept = $false }
+    if (-not $SourcePath) { return $res }
+    try {
+        New-Item -ItemType Directory -Force -Path $EngineDir | Out-Null
+        $src = [System.IO.Path]::GetFullPath($SourcePath)
+        $dst = [System.IO.Path]::GetFullPath($EngineScript)
+        if ($src -ieq $dst) { return $res }
+    } catch { }
+
+    $cur = Get-ScriptVersion -Path $SourcePath
+    $eng = Get-ScriptVersion -Path $EngineScript
+    if ($eng -and $cur -and $eng -gt $cur) {
+        $res.Path = $EngineScript
+        $res.Kept = $true
+        return $res
+    }
+    try {
+        Copy-Item $SourcePath -Destination $EngineScript -Force -ErrorAction Stop
+        $readme = Join-Path (Split-Path $SourcePath -Parent) 'README-RU.txt'
+        if (Test-Path $readme) {
+            Copy-Item $readme -Destination (Join-Path $EngineDir 'README-RU.txt') -Force -ErrorAction SilentlyContinue
+        }
+        $res.Path = $EngineScript
+        $res.Copied = $true
+    } catch {
+        $res.Path = $SourcePath
+    }
+    return $res
 }
 
 function Stop-WatchProcesses {
@@ -991,6 +1038,303 @@ function Export-RawEvents {
     }
 }
 
+# ----------------------------------------------------------------------------
+# plain-Russian summary for the PC owner (ACTION-RU.txt)
+# ----------------------------------------------------------------------------
+function Get-RuStepText {
+    param([string]$Key)
+    switch ($Key) {
+        'driver' {
+            return @(
+                'Переустанови драйвер видеокарты «начисто»:',
+                '  1) скачай свежий драйвер с сайта NVIDIA или AMD;',
+                '  2) при установке выбери «Выполнить чистую установку»;',
+                '  3) после установки выключи компьютер и включи снова.')
+        }
+        'power' {
+            return @(
+                'Проверь питание:',
+                '  - плотно ли вставлены кабели питания в видеокарту (6/8-pin)',
+                '    и в блок питания;',
+                '  - если блок питания старше 5 лет или был дешёвый — покажи',
+                '    компьютер мастеру;',
+                '  - выключи разгон видеокарты, если он есть.')
+        }
+        'cooling-gpu' {
+            return @(
+                'Почисти компьютер от пыли и проверь, что вентиляторы видеокарты',
+                'крутятся. Не ставь системный блок в закрытую нишу.')
+        }
+        'cooling-cpu' {
+            return @(
+                'Почисти радиатор и вентилятор процессора от пыли, проверь',
+                'термопасту. Если компьютер не чистили больше 3 лет — начни с этого.')
+        }
+        'slot' {
+            return @(
+                'Выключи компьютер, вынь видеокарту и вставь её обратно до щелчка.',
+                'Если монитор подключён через переходник или райзер — попробуй без него.')
+        }
+        'cable' {
+            return @(
+                'Проверь кабель монитора: сначала другой кабель DisplayPort,',
+                'потом HDMI. И попробуй другой разъём на видеокарте.')
+        }
+        'single-monitor' {
+            return @(
+                'Попробуй поработать с одним монитором: отключи второй и посмотри,',
+                'пропадёт ли сигнал снова.')
+        }
+        'discrete' {
+            return @(
+                'Если монитор подключён к разъёму материнской платы (там, где USB',
+                'и звук), переставь его в разъём видеокарты — ниже, где вентиляторы.')
+        }
+        'malware' {
+            return @(
+                'Проверь компьютер антивирусом (Защитник Windows) и закрой',
+                'незнакомые программы из автозагрузки.')
+        }
+        'oc' {
+            return @(
+                'Закрой MSI Afterburner, RivaTuner и оверлеи (Discord, Steam,',
+                'NVIDIA) и проверь, повторяется ли проблема без них.')
+        }
+        'device-other' {
+            return @(
+                'Поставь драйверы чипсета материнской платы с сайта её производителя.')
+        }
+        'reboot' {
+            return @(
+                'Перезагрузи компьютер, когда будет удобно: Windows не закончил',
+                'установку драйвера или обновления.')
+        }
+        'logger' {
+            return @(
+                'Оставь инструмент работать в фоне и пользуйся компьютером как обычно.',
+                'Когда монитор снова погаснет — запиши время и пришли новый ZIP.')
+        }
+        default { return @() }
+    }
+}
+
+function Get-RuFinding {
+    param([string]$Line)
+    if ($Line -match 'not digitally signed')                        { return @{ T = 'Драйвер видеокарты без цифровой подписи.'; S = 'driver' } }
+    if ($Line -match 'packages are still in the driver store')      { return @{ T = 'В системе остались пакеты старых драйверов видеокарты.'; S = 'driver' } }
+    if ($Line -match 'pending reboot')                              { return @{ T = 'Windows ждёт перезагрузки после установки драйвера или обновления.'; S = 'reboot' } }
+    if ($Line -match 'Windows Update offers')                       { return @{ T = 'Windows Update предлагает обновления драйверов.'; S = 'driver' } }
+    if ($Line -match 'days old')                                    { return @{ T = 'Драйвер видеокарты давно не обновлялся.'; S = 'driver' } }
+    if ($Line -match 'no real GPU driver installed')                { return @{ T = 'Драйвер видеокарты не установлен.'; S = 'driver' } }
+    if ($Line -match 'Multiple video adapters')                     { return @{ T = 'В компьютере несколько видеоадаптеров.'; S = 'discrete' } }
+    if ($Line -match 'More than one monitor')                       { return @{ T = 'Подключено больше одного монитора.'; S = 'single-monitor' } }
+    if ($Line -match 'Video-related device with an error state')    { return @{ T = 'Видеоустройство помечено ошибкой в Диспетчере устройств.'; S = 'driver' } }
+    if ($Line -match 'Device Manager shows')                        { return @{ T = 'В Диспетчере устройств есть устройства с проблемами.'; S = 'device-other' } }
+    if ($Line -match 'temp folder')                                 { return @{ T = 'Незнакомая программа нагружает видеокарту и запущена из временной папки.'; S = 'malware' } }
+    if ($Line -match 'mining-tool name')                            { return @{ T = 'Запущен процесс с именем программы для майнинга.'; S = 'malware' } }
+    if ($Line -match 'thermal/power throttling')                    { return @{ T = 'Видеокарта сейчас сбрасывает частоты из-за температуры или питания.'; S = 'cooling-gpu' } }
+    if ($Line -match 'GPU temperature is')                          { return @{ T = 'Видеокарта сильно нагревается даже без нагрузки.'; S = 'cooling-gpu' } }
+    if ($Line -match 'PCIe link dropped')                           { return @{ T = 'Линия PCIe работает не на полной скорости.'; S = 'slot' } }
+    if ($Line -match 'maximum frequency right now')                 { return @{ T = 'Процессор работает на пониженной частоте.'; S = 'cooling-cpu' } }
+    if ($Line -match 'ACPI thermal zone')                           { return @{ T = 'Датчик материнской платы показывает высокую температуру.'; S = 'cooling-cpu' } }
+    if ($Line -match 'processor speed limited by firmware')         { return @{ T = 'Windows фиксировал ограничение частоты процессора.'; S = 'cooling-cpu' } }
+    if ($Line -match 'PCIe ASPM power saving is enabled')           { return @{ T = 'Включено энергосбережение линии PCIe (ASPM).'; S = '' } }
+    if ($Line -match 'turns the display off after')                 { return @{ T = 'Windows выключает экран по таймеру.'; S = '' } }
+    if ($Line -match 'Fast Startup is ON')                          { return @{ T = 'Включён «Быстрый запуск» Windows.'; S = '' } }
+    if ($Line -match 'TdrLevel=0')                                  { return @{ T = 'Отключено восстановление после зависания драйвера.'; S = '' } }
+    if ($Line -match 'TdrDelay was already raised')                 { return @{ T = 'Таймаут драйвера уже кто-то увеличивал.'; S = '' } }
+    if ($Line -match 'Display driver reset/error events')           { return @{ T = 'В журнале есть сбросы драйвера экрана.'; S = 'driver' } }
+    if ($Line -match 'WHEA hardware error')                         { return @{ T = 'Аппаратные ошибки оборудования (WHEA).'; S = 'power' } }
+    if ($Line -match 'Kernel-Power 41')                             { return @{ T = 'Были внезапные потери питания.'; S = 'power' } }
+    if ($Line -match 'BugCheck events')                             { return @{ T = 'Были синие экраны.'; S = 'driver' } }
+    if ($Line -match 'Kernel-PnP events')                           { return @{ T = 'Устройства не запускаются или перезапускаются системой.'; S = 'slot' } }
+    if ($Line -match 'No display/power/hardware events')            { return @{ T = 'В журнале Windows за 30 дней нет подходящих событий.'; S = 'logger' } }
+    if ($Line -match 'minidump')                                    { return @{ T = 'Найдены дампы синих экранов.'; S = 'driver' } }
+    if ($Line -match 'Live kernel dump')                            { return @{ T = 'Есть дампы зависания видеодвижка.'; S = 'driver' } }
+    if ($Line -match 'Graphics-related application crashes')        { return @{ T = 'Графические программы падали или зависали.'; S = 'driver' } }
+    if ($Line -match 'display-engine timeouts')                     { return @{ T = 'Windows зафиксировал зависания видеодвижка (LiveKernelEvent 141/117).'; S = 'driver' } }
+    if ($Line -match 'live-kernel/BSOD error report')               { return @{ T = 'Есть отчёты о сбоях Windows.'; S = 'driver' } }
+    if ($Line -match 'overclocking / overlay software')             { return @{ T = 'Запущены программы разгона или оверлеи.'; S = 'oc' } }
+    return $null
+}
+
+function New-RuAdviceText {
+    param([string]$FixStatus = 'none', [string]$WatchStatus = 'unknown')
+
+    $sevRu = @{ HIGH = 'ВАЖНО'; MEDIUM = 'ВЕРОЯТНО'; LOW = 'МЕЛОЧЬ'; INFO = 'СПРАВКА' }
+    $items = New-Object System.Collections.Generic.List[object]
+    foreach ($line in $script:Findings) {
+        $sev = ''
+        if ($line -match '^\[(HIGH|MEDIUM|LOW|INFO)\]') { $sev = $Matches[1] }
+        $ru = Get-RuFinding -Line $line
+        if ($null -eq $ru) { $ru = @{ T = 'Техническая находка (см. report.txt).'; S = '' } }
+        $items.Add([pscustomobject]@{ Sev = $sev; Title = $ru.T; Step = $ru.S; Raw = $line })
+    }
+
+    $out = New-Object System.Collections.Generic.List[string]
+    function L { param([string]$s = '') $out.Add($s) }
+
+    L '=============================================================================='
+    L ' ЧТО НАШЁЛ ИНСТРУМЕНТ — ПРОСТЫМИ СЛОВАМИ'
+    L '=============================================================================='
+    L ("  Дата      : " + (Get-Date).ToString('yyyy-MM-dd HH:mm'))
+    L ("  Компьютер : " + $env:COMPUTERNAME)
+    L ("  Версия    : " + $script:Version)
+    L ''
+
+    $med  = @($items | Where-Object { $_.Sev -eq 'MEDIUM' })
+    $ordered = New-Object System.Collections.Generic.List[object]
+    foreach ($sevName in @('HIGH', 'MEDIUM', 'LOW', 'INFO')) {
+        foreach ($it in $items) { if ($it.Sev -eq $sevName) { $ordered.Add($it) } }
+    }
+    $highOrd = @($ordered | Where-Object { $_.Sev -eq 'HIGH' })
+    L 'ГЛАВНОЕ'
+    L ''
+    if ($highOrd.Count -gt 0) {
+        L ('  ' + $highOrd[0].Title)
+        if ($highOrd.Count -gt 1) { L ('  Важных признаков всего: ' + $highOrd.Count + ' — остальные ниже, по порядку.') }
+        L '  С этого и стоит начать.'
+    } elseif ($med.Count -gt 0) {
+        L ('  Явной поломки не видно, но есть подозрения: ' + $med[0].Title.ToLower())
+        L '  Начни с простых проверок из списка ниже.'
+    } else {
+        L '  В данных нет явных проблем.'
+        L '  Либо сбой не попал в журнал, либо он связан с тем, что происходит'
+        L '  редко: тогда нужна фоновая запись.'
+    }
+    L ''
+
+    if ($items.Count -gt 0) {
+        L 'ЧТО НАЙДЕНО, ПО ВАЖНОСТИ'
+        L ''
+        foreach ($it in $ordered) {
+            $tag = $sevRu[$it.Sev]
+            if (-not $tag) { $tag = $it.Sev }
+            L ('  [' + $tag + '] ' + $it.Title)
+        }
+        L ''
+    }
+
+    $stepKeys = @($items | Where-Object { $_.Step } | ForEach-Object { $_.Step } | Select-Object -Unique)
+    if ($stepKeys.Count -gt 0) {
+        L 'ЧТО ДЕЛАТЬ, ПО ПОРЯДКУ'
+        L ''
+        $n = 0
+        foreach ($k in $stepKeys) {
+            $block = @(Get-RuStepText -Key $k)
+            if ($block.Count -eq 0) { continue }
+            $n++
+            L ('  ' + $n + '. ' + $block[0])
+            for ($i = 1; $i -lt $block.Count; $i++) {
+                if ($block[$i].StartsWith(' ')) { L ('  ' + $block[$i]) } else { L ('    ' + $block[$i]) }
+            }
+            L ''
+        }
+    } else {
+        L 'ЧТО ДЕЛАТЬ, ПО ПОРЯДКУ'
+        L ''
+        L '  Срочных действий по данным отчёта не требуется.'
+        L '  Оставь фоновую запись включённой и пользуйся компьютером как обычно.'
+        L ''
+    }
+
+    L 'ЧТО УЖЕ СДЕЛАНО АВТОМАТИЧЕСКИ'
+    L ''
+    if ($FixStatus -eq 'applied') {
+        L '  - Энергосбережение линии PCIe (ASPM) выключено — действует сразу.'
+        L '  - Энергосбережение USB выключено — действует сразу.'
+        L '  - Windows больше не выключает экран по таймеру — действует сразу.'
+        L '  - «Быстрый запуск» выключен — заработает после ближайшего выключения.'
+        L '  - Защита от зависания драйвера (таймаут 10 с) — заработает после'
+        L '    ближайшей перезагрузки.'
+        L ''
+        L '  Специально перезагружаться не нужно: всё остальное уже работает.'
+        L '  Все изменения можно отменить пунктом 6 меню.'
+    } elseif ($FixStatus -eq 'failed') {
+        L '  Правки не применились: не хватило прав администратора.'
+        L '  Закрой это окно и запусти START-HERE.bat правой кнопкой мыши ->'
+        L '  «Запуск от имени администратора».'
+    } else {
+        L '  Этот запуск только собрал отчёт, настройки не менялись.'
+        L '  Чтобы применить безопасные правки, выбери в меню пункт 1 или 5.'
+    }
+    L ''
+
+    L 'ФОНОВАЯ ЗАПИСЬ'
+    L ''
+    if ($WatchStatus -eq 'ok') {
+        L '  Включена и работает прямо сейчас.'
+        L '  После перезагрузки или выключения компьютера она запустится сама:'
+        L '  включать ничего не нужно, просто войди в Windows как обычно.'
+        L '  Программа лежит в постоянной папке, так что запись не сломается,'
+        L '  даже если распакованную папку перенести. Но не удаляй её: через неё'
+        L '  в конце собирается финальный ZIP (пункт 4).'
+    } elseif ($WatchStatus -eq 'session') {
+        L '  Работает сейчас, но после перезагрузки сама не запустится:'
+        L '  не удалось зарегистрировать задачу (нужны права администратора).'
+        L '  Закрой окно, запусти START-HERE.bat правой кнопкой мыши ->'
+        L '  «Запуск от имени администратора» и выбери пункт 3.'
+    } elseif ($WatchStatus -eq 'failed') {
+        L '  НЕ включилась: не хватило прав администратора.'
+        L '  Закрой это окно, запусти START-HERE.bat правой кнопкой мыши ->'
+        L '  «Запуск от имени администратора» и выбери пункт 3.'
+    } else {
+        L '  Не включалась в этот раз: этот запуск только собрал отчёт.'
+        L '  Включить: пункт 3 в меню.'
+    }
+    L ''
+
+    L 'ЧЕГО НЕ ДЕЛАТЬ'
+    L ''
+    L '  - Не переустанавливай Windows «на всякий случай».'
+    L '  - Не разгоняй видеокарту и не включай оверлеи, пока проблема не уйдёт.'
+    L '  - Не покупай новый блок питания наугад: сначала проверь кабель и порт.'
+    L ''
+
+    L 'ЧТО ОТПРАВИТЬ ОБРАТНО'
+    L ''
+    L '  ZIP-файл с Рабочего стола целиком: в нём report.txt и логи.'
+    L '  И напиши, в какое время монитор погас — это самый полезный факт.'
+    L '  Фоновую запись останавливать не надо, пока проблему не поймали.'
+    L ''
+
+    if ($items.Count -gt 0) {
+        L '------------------------------------------------------------------------------'
+        L ' ТЕХНИЧЕСКИЕ ПОДРОБНОСТИ (для того, кто будет разбираться, по-английски)'
+        L '------------------------------------------------------------------------------'
+        foreach ($it in $items) { L ('  ' + $it.Raw) }
+        L ''
+    }
+    L '=============================================================================='
+    L ' Файл создан автоматически. Правки обратимы, данные никуда не отправляются.'
+    L '=============================================================================='
+    return $out
+}
+
+function Write-RuAdvice {
+    param([string]$ZipPath = '', [string]$FixStatus = 'none', [string]$WatchStatus = 'unknown')
+    $text  = New-RuAdviceText -FixStatus $FixStatus -WatchStatus $WatchStatus
+    $body  = ($text -join "`r`n") + "`r`n"
+    $enc   = New-Object System.Text.UTF8Encoding($true)
+    $deskFile = Join-Path ([Environment]::GetFolderPath('Desktop')) 'ACTION-RU.txt'
+    try { [System.IO.File]::WriteAllText($deskFile, $body, $enc) } catch { }
+    if ($ZipPath -and (Test-Path $ZipPath -PathType Leaf)) {
+        try {
+            Add-Type -AssemblyName System.IO.Compression.FileSystem -ErrorAction SilentlyContinue
+            $za = [System.IO.Compression.ZipFile]::Open($ZipPath, 'Update')
+            $old = $za.GetEntry('ACTION-RU.txt')
+            if ($old) { $old.Delete() }
+            $entry = $za.CreateEntry('ACTION-RU.txt')
+            $st = $entry.Open()
+            $bytes = $enc.GetBytes($body)
+            $st.Write($bytes, 0, $bytes.Length)
+            $st.Close()
+            $za.Dispose()
+        } catch { }
+    }
+    return $deskFile
+}
+
 function New-DiagPackage {
     $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
     $work = Join-Path $OutRoot ("run-$stamp")
@@ -1037,6 +1381,9 @@ function New-DiagPackage {
         Say (" Folder with all files: $zip")
         Say ' Send the whole folder back.'
     }
+    $ruFile = Write-RuAdvice -ZipPath $zip -FixStatus 'none'
+    Say ''
+    Say (" Plain-Russian summary: $ruFile")
     return $zip
 }
 
@@ -1091,7 +1438,8 @@ function Invoke-Fix {
         }
     }
     Say ''
-    Say ' Done. RESTART THE PC for the TDR and Fast Startup changes to take effect.'
+    Say ' Done. ASPM, USB and the display timeout apply immediately.'
+    Say ' Fast Startup and TDR apply at the next shutdown/reboot - no need to restart on purpose.'
     Say ' The "Undo safe fixes" menu item restores the original values at any time.'
     return $true
 }
@@ -1124,13 +1472,14 @@ function Invoke-Revert {
     }
     Say ' [ok]   TDR values restored'
     Say ''
-    Say ' Restart the PC to apply.'
+    Say ' Values restored. Fast Startup and TDR take effect at the next shutdown/reboot.'
 }
 
 # ----------------------------------------------------------------------------
 # watch mode
 # ----------------------------------------------------------------------------
 function Invoke-InstallWatch {
+    $script:WatchState = 'failed'
     if (-not $isAdmin) { Say ' [!] Admin rights are required to register the background task.'; return }
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     Say ' Stopping a previously running logger (if any)...'
@@ -1138,23 +1487,62 @@ function Invoke-InstallWatch {
     $stopFlag = Join-Path $LogDir 'stop.flag'
     if (Test-Path $stopFlag) { Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue }
 
-    $action = New-ScheduledTaskAction -Execute 'powershell.exe' `
-        -Argument ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Mode Watch')
+    $eng = Install-Engine
+    if ($eng.Copied)   { Say ('  logger copied to: ' + $eng.Path) }
+    elseif ($eng.Kept) { Say ('  newer logger already installed: ' + $eng.Path) }
+    else               { Say ('  running the logger from: ' + $eng.Path) }
+
+    $taskArg = '-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $eng.Path + '" -Mode Watch'
+    $action = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument $taskArg
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User ($env:USERDOMAIN + '\' + $env:USERNAME)
-    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
-        -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
-    $principal = New-ScheduledTaskPrincipal -UserId ($env:USERDOMAIN + '\' + $env:USERNAME) -LogonType Interactive -RunLevel Highest
+    $settings = $null
     try {
-        Register-ScheduledTask -TaskName $TaskName -Action $action -Trigger $trigger -Settings $settings -Principal $principal -Force -ErrorAction Stop | Out-Null
+        $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+            -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew `
+            -RestartCount 3 -RestartInterval (New-TimeSpan -Minutes 1)
+    } catch {
+        try {
+            $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries `
+                -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -MultipleInstances IgnoreNew
+        } catch { $settings = $null }
+    }
+    $principal = New-ScheduledTaskPrincipal -UserId ($env:USERDOMAIN + '\' + $env:USERNAME) -LogonType Interactive -RunLevel Highest
+    $registered = $false
+    try {
+        $regArgs = @{ TaskName = $TaskName; Action = $action; Trigger = $trigger; Principal = $principal; Force = $true; ErrorAction = 'Stop' }
+        if ($settings) { $regArgs['Settings'] = $settings }
+        Register-ScheduledTask @regArgs | Out-Null
+        $registered = $true
     } catch {
         Say (' [!] Could not register the scheduled task: ' + $_.Exception.Message)
         Say '     Starting the logger for this session only instead.'
     }
     try { Start-ScheduledTask -TaskName $TaskName -ErrorAction Stop } catch {
-        Start-Process -FilePath 'powershell.exe' -ArgumentList ('-NoProfile -WindowStyle Hidden -ExecutionPolicy Bypass -File "' + $PSCommandPath + '" -Mode Watch') -WindowStyle Hidden
+        Start-Process -FilePath 'powershell.exe' -ArgumentList $taskArg -WindowStyle Hidden
     }
+
+    $running = $false
+    for ($k = 0; $k -lt 6; $k++) {
+        Start-Sleep -Seconds 2
+        try {
+            $p = Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" -ErrorAction SilentlyContinue |
+                Where-Object { $_.CommandLine -and $_.CommandLine -like '*GPU-Diag.ps1*' -and $_.CommandLine -like '*Watch*' } |
+                Select-Object -First 1
+            if ($p) { $running = $true; break }
+        } catch { }
+    }
+    if ($running -and $registered)     { $script:WatchState = 'ok' }
+    elseif ($running -and -not $registered) { $script:WatchState = 'session' }
+    else                               { $script:WatchState = 'failed' }
+
     Say ''
-    Say ' Background monitoring is ON.'
+    if ($script:WatchState -eq 'ok') {
+        Say ' Background monitoring is ON and will start by itself after every logon.'
+    } elseif ($script:WatchState -eq 'session') {
+        Say ' Background monitoring is ON for this session only (task not registered).'
+    } else {
+        Say ' [!] Background monitoring did NOT start.'
+    }
     Say (" Logs: " + $LogDir)
     Say ' Leave the PC running normally. When the monitor drops out again, the'
     Say ' moment and the GPU values around it will be recorded.'
@@ -1338,15 +1726,15 @@ function Invoke-All {
     Say ''
     Say ' ONE-CLICK MODE'
     Say '   1) full report, including driver check  -> ZIP on the Desktop'
-    Say '   2) safe fixes (reversible)'
+    Say '   2) safe fixes (reversible, no restart needed)'
     Say '   3) background logging until it is stopped'
     Say ''
-    $a = Read-Host ' Start? (y/n)'
-    if ($a -notmatch '^(y|yes)$') { Say ' Cancelled.'; return }
+    Say ' Starting now - nothing else to press except the UAC "Yes".'
+    Say ''
 
     Say ''
     Say ' STEP 1/3 - report'
-    New-DiagPackage | Out-Null
+    $zip = New-DiagPackage
 
     Say ''
     Say ' STEP 2/3 - safe fixes'
@@ -1356,23 +1744,28 @@ function Invoke-All {
     Say ''
     Say ' STEP 3/3 - background logging'
     Invoke-InstallWatch
-    $taskOk = $false
-    try { $taskOk = [bool](Get-ScheduledTask -TaskName $TaskName -ErrorAction Stop) } catch { $taskOk = $false }
+
+    $ruFile = Write-RuAdvice -ZipPath $zip -FixStatus $(if ($fixOk) { 'applied' } else { 'failed' }) -WatchStatus $script:WatchState
 
     Say ''
     Say ' ================================================================'
-    Say '  DONE. What to do next:'
-    Say '   1. restart the PC (the fixes need it)'
-    Say '   2. use the PC normally, the logger records in the background'
-    Say '   3. when the monitor drops out again, open this tool and choose'
-    Say '      "Stop logging + final ZIP", then send that ZIP back.'
-    if (-not $taskOk) { Say '  [!] Background logging is NOT registered - run this tool as administrator.' }
-    Say ' ================================================================'
-    $r = Read-Host ' Restart the PC now? (y/n)'
-    if ($r -match '^(y|yes)$') {
-        Say ' Restarting in 20 seconds - save your work if needed.'
-        shutdown /r /t 20 /c "Restart to apply GPU-Diag settings" | Out-Null
+    Say '  ГОТОВО. Больше ничего делать не нужно.'
+    Say '  На Рабочем столе:'
+    Say '    ACTION-RU.txt  - что найдено и что делать (по-русски)'
+    Say ("    " + $(if ($zip) { Split-Path $zip -Leaf } else { 'ZIP' }) + "  - отправь этот файл обратно")
+    Say ''
+    if ($script:WatchState -eq 'ok') {
+        Say '  Запись включена и после перезагрузки запустится сама.'
+        Say '  Перезагружайся когда удобно, включать ничего не нужно.'
+    } elseif ($script:WatchState -eq 'session') {
+        Say '  Запись работает сейчас, но после перезагрузки НЕ запустится.'
+        Say '  Запусти START-HERE.bat правой кнопкой -> «Запуск от имени администратора».'
+    } else {
+        Say '  [!] Запись не включилась - запусти от администратора, пункт 3.'
     }
+    Say ''
+    Say '  Защита драйвера включится при следующем обычном выключении.'
+    Say ' ================================================================'
 }
 
 # ----------------------------------------------------------------------------
@@ -1385,13 +1778,16 @@ function Show-Menu {
         Say '  GPU / DISPLAY DIAGNOSTICS'
         Say ("  computer: $env:COMPUTERNAME      admin: $isAdmin")
         Say ' =============================================================='
-        Say '  1  DO EVERYTHING  (recommended: report + fixes + logging)'
-        Say '  2  Full report only            (read-only, ~1-2 min)'
-        Say '  3  Turn ON background logging  (for intermittent problems)'
-        Say '  4  Stop logging + build final ZIP to send back'
-        Say '  5  Apply safe fixes only'
-        Say '  6  Undo safe fixes'
-        Say '  0  Exit'
+        Say '  НАЖМИ 1 И ENTER - ЭТО ВСЁ, ЧТО НУЖНО СДЕЛАТЬ'
+        Say '  (остальные пункты - только если попросит тот, кто помогает)'
+        Say ' --------------------------------------------------------------'
+        Say '  1  DO EVERYTHING    / сделать всё сразу'
+        Say '  2  Full report only / только отчёт (ничего не меняет)'
+        Say '  3  Turn ON logging  / включить фоновую запись'
+        Say '  4  Stop + final ZIP / остановить запись и собрать ZIP'
+        Say '  5  Apply fixes only / только исправления'
+        Say '  6  Undo fixes       / отменить исправления'
+        Say '  0  Exit             / выход'
         Say ''
         $c = Read-Host ' Choose 0-6'
         switch ($c) {

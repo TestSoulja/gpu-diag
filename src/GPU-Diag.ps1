@@ -30,7 +30,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5'
+$script:Version        = '1.5.1'
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -1255,6 +1255,32 @@ function New-RuAdviceText {
     L ("  Дата      : " + (Get-Date).ToString('yyyy-MM-dd HH:mm'))
     L ("  Компьютер : " + $env:COMPUTERNAME)
     L ("  Версия    : " + $script:Version)
+    L ''
+
+    L 'ЧТО В ИТОГЕ'
+    L ''
+    if ($FixStatus -eq 'applied' -and $WatchStatus -eq 'ok') {
+        L '  - Причина уже понятна (ниже), настройки, которые чаще всего дают'
+        L '    чёрный экран, исправлены — всё обратимо.'
+        L '  - Запись работает сама: после перезагрузки включать ничего не нужно.'
+        L '  - От тебя нужно одно: когда монитор снова погаснет — запустить'
+        L '    инструмент ещё раз, нажать 4 и прислать ZIP с Рабочего стола.'
+    } elseif ($FixStatus -eq 'applied' -and $WatchStatus -eq 'session') {
+        L '  - Настройки исправлены, отчёт собран.'
+        L '  - Запись работает только до выключения компьютера: задачу не удалось'
+        L '    поставить без прав администратора.'
+        L '  - Закрой окно, запусти START-HERE.bat от имени администратора и нажми 1,'
+        L '    чтобы запись включалась сама.'
+    } elseif ($FixStatus -eq 'failed' -or $WatchStatus -eq 'failed') {
+        L '  - Отчёт собран, но исправить настройки и включить запись не удалось:'
+        L '    не хватило прав администратора.'
+        L '  - Закрой окно, запусти START-HERE.bat правой кнопкой мыши ->'
+        L '    «Запуск от имени администратора» и нажми 1.'
+    } else {
+        L '  - Сейчас это только отчёт: ничего не менялось и не включалось.'
+        L '  - Чтобы инструмент реально помог, запусти START-HERE.bat и нажми 1:'
+        L '    он сам исправит настройки, включит запись и всё объяснит здесь же.'
+    }
     L ''
 
     $med  = @($items | Where-Object { $_.Sev -eq 'MEDIUM' })

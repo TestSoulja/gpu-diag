@@ -27,9 +27,13 @@ Update driver search (read-only) · monitors incl. physical connection type · D
 problem devices · per-process GPU load · `nvidia-smi` telemetry (temp, power, clocks,
 throttling, PCIe link) · CPU load/clock/throttling (`Kernel-Processor-Power` id 37) · power
 settings (PCIe ASPM, display/sleep timeouts, USB suspend, Fast Startup) · graphics registry
-(TDR, HAGS) · 30 days of System/Application events (TDR 4101, WHEA, Kernel-Power 41, BugCheck,
-PnP) · minidumps and `LiveKernelReports` · WER `LiveKernelEvent` signatures (141/117) ·
-overclock/overlay software · autostart.
+(TDR, HAGS, MPO `OverlayTestMode`) · 30 days of System/Application events (TDR 4101, WHEA,
+Kernel-Power 41, BugCheck, PnP) · minidumps and `LiveKernelReports` · WER `LiveKernelEvent`
+signatures (141/117) · overclock/overlay software · autostart.
+
+Cross-checks when display errors exist: first crash date vs newest GPU driver package
+(driver suspect), HAGS on, MPO enabled, refresh rate above 60 Hz. These are findings only —
+the tool never changes HAGS, MPO or the refresh rate itself.
 
 Output ends with a `FINDINGS` section ranked HIGH/MEDIUM/LOW/INFO. The same data is rendered
 for the PC owner as `ACTION-RU.txt` on the Desktop (and inside the ZIP): plain Russian,
@@ -47,9 +51,11 @@ Fast Startup at the next shutdown, `TdrDelay` at the next reboot whenever it hap
 Scheduled task `GPU-Diag-Watch` at logon (highest privileges, restarts up to 3 times on
 failure). It runs from a stable copy at `%LOCALAPPDATA%\GPU-Diag\engine\GPU-Diag.ps1`, so it
 survives reboots, moving or replacing the unpacked folder; the engine version never downgrades.
-Files in `%LOCALAPPDATA%\GPU-Diag`: `gpu-watch.csv` (5 s GPU telemetry + active window title),
-`thermal.csv` (5 s CPU temp/clock), `events.log` (relevant system events with GPU/CPU
-context at that moment).
+Files in `%LOCALAPPDATA%\GPU-Diag`: `gpu-watch.csv` (5 s GPU telemetry incl. PCIe gen/width +
+active window title), `thermal.csv` (5 s CPU temp/clock), `events.log` (relevant system events
+with GPU/CPU/PCIe context at that moment). If the column set changes after an update, the old
+`gpu-watch.csv` is renamed to `gpu-watch-<timestamp>.csv` (kept, and packed into the ZIP)
+instead of being overwritten.
 
 Note: active window titles end up in the CSV — review before sharing the archive.
 

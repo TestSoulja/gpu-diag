@@ -44,9 +44,14 @@
 3. `report.txt` → `CRASH DUMPS / LIVE KERNEL REPORTS`: WATCHDOG-дампы = 0x141.
 4. `report.txt` → `APPLICATION LOG` → WER `P1=141/117`.
 5. `report.txt` → `NVIDIA LIVE DATA`: `PCIe link` (gen/x), троттлинг, температура.
-6. `watch\events.log` — события с контекстом GPU/CPU в момент инцидента.
-7. `watch\gpu-watch.csv` — окрестности метки времени инцидента: питание, частота, троттлинг.
-8. `watch\thermal.csv` — троттлил ли CPU.
+6. `report.txt` → `GRAPHICS / DRIVER REGISTRY`: `HwSchMode` (HAGS), `OverlayTestMode` (MPO).
+   Даты для сравнения: `First display error` (SYSTEM EVENT LOG) и
+   `Newest GPU driver package` (DRIVER HEALTH CHECK).
+7. `watch\events.log` — события с контекстом GPU/CPU/PCIe в момент инцидента.
+8. `watch\gpu-watch.csv` — окрестности метки времени инцидента: питание, частота, троттлинг,
+   `pcie_gen`/`pcie_width` (просадка линии видна только здесь). Старый файл после смены
+   формата лежит рядом как `gpu-watch-<таймстамп>.csv`.
+9. `watch\thermal.csv` — троттлил ли CPU.
 
 ## 4. Матрица выводов
 

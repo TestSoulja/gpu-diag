@@ -30,7 +30,8 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.4'
+$script:Version        = '1.5'
+$script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
 $EngineDir             = Join-Path $LogDir 'engine'
@@ -117,6 +118,7 @@ function Get-Gpus {
             DriverVer  = $g.DriverVersion
             DriverDate = $g.DriverDate
             Resolution = $res
+            RefreshHz  = $g.CurrentRefreshRate
             Status     = $g.Status
             Pnp        = $g.PNPDeviceID
         }
@@ -191,7 +193,7 @@ function Get-NvRaw {
 function Get-NvSample {
     param([string]$Smi)
     if (-not $Smi) { return $null }
-    $q = 'name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.used,power.draw,power.limit,clocks.sm,clocks.mem,fan.speed,pstate,clocks_throttle_reasons.active'
+    $q = 'name,driver_version,temperature.gpu,utilization.gpu,utilization.memory,memory.used,power.draw,power.limit,clocks.sm,clocks.mem,fan.speed,pstate,clocks_throttle_reasons.active,pcie.link.gen.current,pcie.link.width.current'
     $v = Get-NvRaw -Smi $Smi -Query $q
     if (-not $v -or $v.Count -lt 13) { return $null }
     return [pscustomobject]@{
@@ -200,6 +202,8 @@ function Get-NvSample {
         Power      = $v[6];  PowerLimit = $v[7];  ClockSm = $v[8]
         ClockMem   = $v[9];  Fan        = $v[10]; PState  = $v[11]
         Throttle   = $v[12]
+        PcieGen    = $(if ($v.Count -ge 14) { $v[13] } else { '' })
+        PcieWidth  = $(if ($v.Count -ge 15) { $v[14] } else { '' })
     }
 }
 
@@ -372,6 +376,13 @@ function Get-DriverHealth {
     foreach ($p in ($pkgs | Select-Object -First 8)) { W ("     {0}  (installed around {1:yyyy-MM-dd})" -f $p.Name, $p.LastWriteTime) }
     $nvPkgs = @($pkgs | Where-Object { $_.Name -like 'nv_dispi*' -or $_.Name -like 'nvhm*' -or $_.Name -like 'nvaci*' })
     $amdPkgs = @($pkgs | Where-Object { $_.Name -like 'amdkm*' -or $_.Name -like 'amdkmpfd*' })
+    $gpuPkgDate = $null
+    $gpuAll = @($nvPkgs) + @($amdPkgs)
+    if ($gpuAll.Count -gt 0) {
+        $gpuPkgDate = ($gpuAll | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
+        KV 'Newest GPU driver package' $gpuPkgDate.ToString('yyyy-MM-dd HH:mm')
+    }
+    $script:NewestGpuPkgDate = $gpuPkgDate
     if ($nvPkgs.Count -gt 2 -or $amdPkgs.Count -gt 2) {
         Finding 'INFO' ("Several GPU driver packages are still in the driver store (NVIDIA: {0}, AMD: {1}) - leftovers of previous installs. If a clean reinstall is needed, use DDU / the vendor's 'clean install' option." -f $nvPkgs.Count, $amdPkgs.Count)
     }
@@ -794,10 +805,16 @@ function Build-Report {
     $tdrDdi   = Get-RegValue $gd 'TdrDdiDelay'
     $tdrLevel = Get-RegValue $gd 'TdrLevel'
     $hwSch    = Get-RegValue $gd 'HwSchMode'
+    $mpoMode  = $null
+    try { $mpoMode = Get-RegValue 'HKLM:\SOFTWARE\Microsoft\Windows\Dwm' 'OverlayTestMode' } catch { }
     KV 'TdrDelay'    $(if ($null -eq $tdrDelay) { 'default (2 s)' } else { "$tdrDelay s" })
     KV 'TdrDdiDelay' $(if ($null -eq $tdrDdi) { 'default (5 s)' } else { "$tdrDdi s" })
     KV 'TdrLevel'    $(if ($null -eq $tdrLevel) { 'default (3 = recover)' } else { "$tdrLevel" })
     KV 'HwSchMode (HAGS)' $(switch ($hwSch) { 2 { 'enabled' } 1 { 'disabled' } default { 'default/unknown' } })
+    KV 'MPO overlay (OverlayTestMode)' $(
+        if ($null -eq $mpoMode) { 'default (MPO enabled)' }
+        elseif ("$mpoMode" -eq '5') { 'disabled (5)' }
+        else { "set to $mpoMode" })
     if ($tdrLevel -eq 0) {
         Finding 'HIGH' 'TdrLevel=0 is set: driver timeout recovery is DISABLED, so a driver hang freezes the picture until reboot. (Fix option resets this.)'
     }
@@ -809,6 +826,7 @@ function Build-Report {
 
     # ----------------------------------------------------------------- events
     Hdr 'SYSTEM EVENT LOG (last 30 days)'
+    $gpuPkgDate = $script:NewestGpuPkgDate
     $start = (Get-Date).AddDays(-30)
     $providers = @('Display', 'nvlddmkm', 'amdkmdag', 'amdkmdap', 'igfx', 'igfxn',
         'Microsoft-Windows-WHEA-Logger', 'Microsoft-Windows-Kernel-Power', 'BugCheck',
@@ -859,8 +877,14 @@ function Build-Report {
     KV 'Unexpected shutdown (6008)'  $unexp.Count
     KV 'Kernel-PnP problems'         $pnp.Count
 
+    $firstCrashTime = $null
     if ($displayFail.Count -gt 0) {
         Finding 'HIGH' ("Display driver reset/error events: {0} in 30 days. That is the classic signature of a driver/GPU/PSU problem behind 'monitor goes black while GPU is loaded'." -f $displayFail.Count)
+        $firstBad = ($displayFail | Sort-Object TimeCreated | Select-Object -First 1)
+        if ($firstBad) {
+            $firstCrashTime = $firstBad.TimeCreated
+            KV 'First display error' $firstBad.TimeCreated.ToString('yyyy-MM-dd HH:mm')
+        }
     }
     if ($whea.Count -gt 0) {
         Finding 'HIGH' ("WHEA hardware error events: {0}. This is the machine reporting a hardware-level fault (PCIe bus, CPU, RAM, power). Not a monitor problem." -f $whea.Count)
@@ -870,9 +894,6 @@ function Build-Report {
     }
     if ($bugs.Count -gt 0) { Finding 'HIGH' ("BSOD / BugCheck events: {0}. Look at the dump files below." -f $bugs.Count) }
     if ($pnp.Count -gt 0) { Finding 'MEDIUM' ("Kernel-PnP events: {0}. A device (often the GPU) is failing to start or is being reset by Windows." -f $pnp.Count) }
-    if ($allEvents.Count -eq 0) {
-        Finding 'INFO' 'No display/power/hardware events in the System log for the last 30 days. Either the problem is very recent, the log was cleared, or Windows records nothing until the background logger is running.'
-    }
 
     # ------------------------------------------------------------ crash dumps
     Hdr 'CRASH DUMPS / LIVE KERNEL REPORTS'
@@ -928,6 +949,35 @@ function Build-Report {
         Finding 'HIGH' 'Windows recorded display-engine timeouts (LiveKernelEvent 141/117 = video engine stopped responding). That is driver, GPU or power delivery - not the monitor.'
     } elseif ($wer.Count -gt 0) {
         Finding 'MEDIUM' ("Windows recorded {0} live-kernel/BSOD error report(s) - see the signature list above." -f $wer.Count)
+    }
+
+    # ------------------------------------- display crash context (driver / MPO / HAGS)
+    if ($allEvents.Count -eq 0 -and $wer.Count -eq 0) {
+        Finding 'INFO' 'No display/power/hardware events in the System log for the last 30 days. Either the problem is very recent, the log was cleared, or Windows records nothing until the background logger is running.'
+    }
+    if (-not $firstCrashTime -and $engineTimeout.Count -gt 0) {
+        $times = @()
+        foreach ($k in $engineTimeout) { $times += @($signatures[$k]) }
+        if ($times.Count -gt 0) {
+            $firstCrashTime = ($times | Sort-Object | Select-Object -First 1)
+            KV 'First display error' $firstCrashTime.ToString('yyyy-MM-dd HH:mm')
+        }
+    }
+    if ($firstCrashTime -and $gpuPkgDate -and $firstCrashTime -gt $gpuPkgDate.AddDays(-1)) {
+        Finding 'MEDIUM' ("The newest GPU driver package was installed around {0}, and the first display error came after that ({1}) - the driver is the prime suspect. Roll back or clean-install a different version." -f $gpuPkgDate.ToString('yyyy-MM-dd'), $firstCrashTime.ToString('yyyy-MM-dd'))
+    }
+    if ($displayFail.Count -gt 0 -or $engineTimeout.Count -gt 0) {
+        if ($hwSch -eq 2) {
+            Finding 'MEDIUM' 'Hardware-accelerated GPU scheduling (HAGS) is enabled and Windows logged display resets/timeouts - HAGS is a known trigger. Test with it switched off (Settings > System > Display > Graphics).'
+        }
+        if ($null -eq $mpoMode -or "$mpoMode" -ne '5') {
+            Finding 'MEDIUM' 'Multi-plane overlay (MPO) is enabled (OverlayTestMode is not set) and Windows logged display resets/timeouts - MPO is a known cause of black flashes on NVIDIA. Test with OverlayTestMode=5 in HKLM\SOFTWARE\Microsoft\Windows\Dwm.'
+        }
+        $maxHz = ($gpus | Where-Object { $_.RefreshHz } | Measure-Object -Property RefreshHz -Maximum).Maximum
+        if ($maxHz -and $maxHz -gt 60) {
+            KV 'Highest active refresh rate' ("$maxHz Hz")
+            Finding 'LOW' ("The screen runs at $maxHz Hz and there were display resets: as a cheap cable/bandwidth test, set 60 Hz for a day.")
+        }
     }
 
     # -------------------------------------------------------- OC / monitoring
@@ -1100,6 +1150,27 @@ function Get-RuStepText {
                 'Закрой MSI Afterburner, RivaTuner и оверлеи (Discord, Steam,',
                 'NVIDIA) и проверь, повторяется ли проблема без них.')
         }
+        'hags' {
+            return @(
+                'Выключи аппаратное планирование GPU (HAGS):',
+                '  Параметры -> Система -> Дисплей -> Графика -> Изменение настроек',
+                '  графики по умолчанию -> выключи «Планирование графического',
+                '  процессора с аппаратным ускорением». Потом перезагрузи компьютер.')
+        }
+        'mpo' {
+            return @(
+                'MPO — способ вывода картинки в Windows; на видеокартах NVIDIA он',
+                'иногда даёт чёрные вспышки. Сама ничего не меняй: если проблема',
+                'останется после переустановки драйвера, покажи этот файл тому,',
+                'кто помогает — там меняется одна настройка (OverlayTestMode = 5).')
+        }
+        'refresh' {
+            return @(
+                'Поставь частоту экрана 60 Гц на день:',
+                '  Параметры -> Система -> Дисплей -> Дополнительные параметры дисплея',
+                '  -> Частота обновления -> 60 Гц. Если сигнал перестанет пропадать,',
+                '  дело в кабеле или в полосе пропускания, а не в видеокарте.')
+        }
         'device-other' {
             return @(
                 'Поставь драйверы чипсета материнской платы с сайта её производителя.')
@@ -1155,6 +1226,10 @@ function Get-RuFinding {
     if ($Line -match 'display-engine timeouts')                     { return @{ T = 'Windows зафиксировал зависания видеодвижка (LiveKernelEvent 141/117).'; S = 'driver' } }
     if ($Line -match 'live-kernel/BSOD error report')               { return @{ T = 'Есть отчёты о сбоях Windows.'; S = 'driver' } }
     if ($Line -match 'overclocking / overlay software')             { return @{ T = 'Запущены программы разгона или оверлеи.'; S = 'oc' } }
+    if ($Line -match 'Hardware-accelerated GPU scheduling')         { return @{ T = 'Включено аппаратное планирование GPU (HAGS).'; S = 'hags' } }
+    if ($Line -match 'Multi-plane overlay')                         { return @{ T = 'Включён MPO (multi-plane overlay).'; S = 'mpo' } }
+    if ($Line -match 'the driver is the prime suspect')             { return @{ T = 'Сбои начались после установки видеодрайвера.'; S = 'driver' } }
+    if ($Line -match 'cheap cable/bandwidth test')                  { return @{ T = 'Экран работает на частоте выше 60 Гц.'; S = 'refresh' } }
     return $null
 }
 
@@ -1572,7 +1647,18 @@ function Invoke-Watch {
     $errPath  = Join-Path $LogDir 'watch-errors.log'
     if (Test-Path $stopFlag) { Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue }
 
-    $header = 'timestamp,gpu,driver,temp_c,util_gpu_pct,util_mem_pct,mem_used_mb,power_w,power_limit_w,sm_clock_mhz,mem_clock_mhz,fan_pct,pstate,throttle_bits,throttle_names,monitors,active_window'
+    $header = 'timestamp,gpu,driver,temp_c,util_gpu_pct,util_mem_pct,mem_used_mb,power_w,power_limit_w,sm_clock_mhz,mem_clock_mhz,fan_pct,pstate,throttle_bits,throttle_names,monitors,pcie_gen,pcie_width,active_window'
+    if ((Test-Path $csv) -and (Get-Item $csv).Length -gt 0) {
+        $oldHeader = ''
+        try { $oldHeader = (Get-Content $csv -TotalCount 1) } catch { }
+        if ($oldHeader -and $oldHeader.Trim() -ne $header) {
+            $prev = Join-Path $LogDir ('gpu-watch-' + (Get-Date -Format 'yyyyMMdd-HHmmss') + '.csv')
+            try {
+                Move-Item $csv $prev -Force -ErrorAction Stop
+                Add-Utf8Line -Path $evPath -Line ("{0}  ---- log format changed, earlier data kept as {1} ----" -f (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), (Split-Path $prev -Leaf))
+            } catch { }
+        }
+    }
     if (-not (Test-Path $csv) -or (Get-Item $csv).Length -eq 0) { Add-Utf8Line -Path $csv -Line $header }
     if (-not (Test-Path $thermCsv) -or (Get-Item $thermCsv).Length -eq 0) {
         Add-Utf8Line -Path $thermCsv -Line 'timestamp,cpu_temp_c,cpu_load_pct,cpu_mhz,cpu_pct_of_max'
@@ -1601,9 +1687,9 @@ function Invoke-Watch {
             if ($s) {
                 $vals = @($stamp, $s.Name, $s.Driver, $s.Temp, $s.UtilGpu, $s.UtilMem, $s.MemUsed, $s.Power,
                     $s.PowerLimit, $s.ClockSm, $s.ClockMem, $s.Fan, $s.PState, $s.Throttle,
-                    (Convert-ThrottleBits $s.Throttle), $monCount)
+                    (Convert-ThrottleBits $s.Throttle), $monCount, $s.PcieGen, $s.PcieWidth)
             } else {
-                $vals = @($stamp) + (@('') * 15)
+                $vals = @($stamp) + (@('') * 17)
                 $vals[15] = $monCount
             }
             $line = ($vals -join ',') + ',"' + ($win -replace '"', "'") + '"'
@@ -1618,7 +1704,7 @@ function Invoke-Watch {
                     Add-Utf8Line -Path $evPath -Line ('{0}  [{1}] id={2} ({3})  {4}' -f $e.TimeCreated.ToString('yyyy-MM-dd HH:mm:ss'), $e.ProviderName, $e.Id, $e.LevelDisplayName, $msg)
                 }
                 if ($new.Count -gt 0) {
-                    $ctx = $(if ($s) { "temp $($s.Temp)C, util $($s.UtilGpu)%, power $($s.Power)W, throttle $(Convert-ThrottleBits $s.Throttle)" } else { 'n/a' })
+                    $ctx = $(if ($s) { "temp $($s.Temp)C, util $($s.UtilGpu)%, power $($s.Power)W, pcie g$($s.PcieGen)x$($s.PcieWidth), throttle $(Convert-ThrottleBits $s.Throttle)" } else { 'n/a' })
                     $tp = (Get-ThermalSample) -split ','
                     $ctx = $ctx + "; cpu " + $tp[1] + "C/" + $tp[2] + "%/" + $tp[3] + "MHz"
                     Add-Utf8Line -Path $evPath -Line ('            (at that moment: ' + $ctx + ')')

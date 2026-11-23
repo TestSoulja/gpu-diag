@@ -37,7 +37,7 @@ START-HERE.bat
 | NVIDIA | `nvidia-smi -i 0 --query-gpu=... --format=csv,noheader,nounits`, `--list-gpus` |
 | CPU | `Win32_Processor`, `Win32_PerfFormattedData_Counters_ProcessorInformation`, `MSAcpi_ThermalZoneTemperature` |
 | Питание | `powercfg /query SCHEME_CURRENT <sub> <setting>`; значения берутся как **последние два hex-числа** в выводе (AC, DC) — это не зависит от языка Windows |
-| Реестр графики | `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers` |
+| Реестр графики | `HKLM\SYSTEM\CurrentControlSet\Control\GraphicsDrivers` (`TdrDelay`, `TdrDdiDelay`, `TdrLevel`, `HwSchMode`), `HKLM\SOFTWARE\Microsoft\Windows\Dwm` (`OverlayTestMode` = MPO) |
 | События | `Get-WinEvent -FilterHashtable` по списку провайдеров + id 4101/4102/4103 |
 | Дампы | `C:\Windows\Minidump`, `C:\Windows\LiveKernelReports` (рекурсивно) |
 | WER | Application log, `Windows Error Reporting` id 1001, фильтр `LiveKernelEvent|BlueScreen`, группировка по `P1` |
@@ -71,11 +71,17 @@ START-HERE.bat
 
 `-Mode Watch` — бесконечный цикл с шагом 5 с:
 
-1. `nvidia-smi` → строка в `gpu-watch.csv` (плюс `monitors` раз в 30 с и заголовок окна).
+1. `nvidia-smi` → строка в `gpu-watch.csv`: температура, загрузка, потребление,
+   частоты, pstate, троттлинг, **режим линии PCIe (gen/width)**, число мониторов
+   (раз в 30 с) и заголовок активного окна.
 2. `Win32_PerfFormattedData_Counters_ProcessorInformation` + ACPI thermal → `thermal.csv`.
 3. Раз в 30 с — `Get-WinEvent` по `RecordId > state.json:lastRecordId`; новые события
-   пишутся в `events.log` с контекстом GPU/CPU.
+   пишутся в `events.log` с контекстом GPU/CPU/PCIe.
 4. Остановка — по файлу `stop.flag`; задача планировщика снимается пунктом меню `4`/`6`.
+
+Если набор колонок изменился (например, после обновления версии), старый
+`gpu-watch.csv` не удаляется, а переименовывается в `gpu-watch-<таймстамп>.csv`
+и попадает в финальный ZIP; в `events.log` остаётся отметка `log format changed`.
 
 Задача запускает не распакованную папку, а постоянную копию
 `%LOCALAPPDATA%\GPU-Diag\engine\GPU-Diag.ps1` (её делает `Install-Engine` при включении
@@ -92,6 +98,19 @@ START-HERE.bat
 устойчивым фрагментам англоязычных строк. **Если меняешь текст `Finding ...` в отчёте,
 проверь `Get-RuFinding`** — иначе находка попадёт в русский файл как
 «Техническая находка (см. report.txt)».
+
+## Правила по сбоям экрана (с 1.5)
+
+Если в журнале есть TDR (`Display`/`nvlddmkm`, 4101/4102/4103) или WER `P1=141/117`:
+
+- первая дата сбоя сравнивается с датой самого свежего пакета GPU-драйвера в DriverStore:
+  сбой после установки → находка «драйвер — главный подозреваемый»;
+- `HwSchMode = 2` → подсказка выключить HAGS;
+- `OverlayTestMode` не задан или не `5` → подсказка про MPO;
+- активная герцовка выше 60 Гц → дешёвый тест кабеля/полосы.
+
+Всё это только текст в `FINDINGS`/`ACTION-RU.txt`: инструмент сам HAGS, MPO и герцовку
+не меняет. Если меняешь формулировки — синхронизируй `Get-RuFinding`.
 
 ## Самопроверка
 

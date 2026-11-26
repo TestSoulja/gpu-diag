@@ -69,11 +69,12 @@ file. The whole log folder is capped at 100 MB: after a rotation the oldest segm
 deleted until the total `.csv` + `.log` size is at or below the cap. The current files,
 `state.json`, `stop.flag`, `fix-backup.json`, `events.log` and `watch-errors.log` are never
 deleted. The cap is held by deleting old segments; `events.log` and `watch-errors.log`
-themselves are never deleted, so in an extreme case the folder can exceed 100 MB. A failed
-rotation (file locked) is written to `watch-errors.log` as `rotation failed` at most once per
-10 minutes per file; a later success adds one `rotation ok` line. The 27.11.2026 measurement
-gave about 3.8 MB per day (4 369 records in 6.5 h, one record every 5.41 s), so 100 MB is
-roughly 25–26 days of history.
+themselves are never deleted, so in an extreme case the folder can exceed 100 MB. Trimming
+runs only when a rotation in that pass succeeded, so a failed rotation leaves old segments
+in place and the folder can exceed 100 MB. A failed rotation is written to `watch-errors.log`
+as `rotation failed` at most once per 10 minutes per file; a later success adds one
+`rotation ok` line. The 27.11.2026 measurement gave about 3.8 MB per day (4 369 records in
+6.5 h, one record every 5.41 s), so 100 MB is roughly 25–26 days of history.
 
 The engine folder is write-restricted to Administrators at install time (the user keeps
 read/execute and can delete it), because the task runs that script elevated. This stops

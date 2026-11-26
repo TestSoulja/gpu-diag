@@ -40,6 +40,11 @@ function Report-Check {
 
 Write-Host ("GPU Diag guard: {0}" -f $root)
 
+# The mirror keeps only the published state; all work happens in the staging copy.
+if ($root.TrimEnd('\') -ieq 'C:\VS\gpu-diag') {
+    Write-Host '  ВНИМАНИЕ: это зеркало C:\VS\gpu-diag — работай в стейдже C:\VS\gpu-diag-staging' -ForegroundColor Yellow
+}
+
 # ---------------------------------------------------------------- 1. version
 $version = ''
 $versionFiles = @()

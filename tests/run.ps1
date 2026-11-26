@@ -461,6 +461,57 @@ Test-Case 'events.log records a log rotation line' {
     }
 }
 
+Test-Case 'a locked current file: failure is visible once and recovery is logged' {
+    $dir = Join-Path $env:TEMP ('gpu-diag-rotlock-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    $lock = $null
+    try {
+        $current = Join-Path $dir 'gpu-watch.csv'
+        New-SizedFile $current 3072 'l'
+        $lenBefore = (Get-Item $current).Length
+        $lock = [IO.File]::Open($current, [IO.FileMode]::Open, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None)
+
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 6KB
+
+        $segments = @(Get-ChildItem $dir -Filter 'gpu-watch-*.csv' -File)
+        Assert-Equal 0 $segments.Count 'no segment after a failed rename'
+        Assert-Equal $lenBefore (Get-Item $current).Length 'the locked current file must not change'
+        $errPath = Join-Path $dir 'watch-errors.log'
+        Assert-True (Test-Path $errPath) 'watch-errors.log was not created'
+        $errText = [IO.File]::ReadAllText($errPath)
+        Assert-True ($errText -match 'rotation failed: gpu-watch\.csv: .+') 'no "rotation failed" line'
+        $failedCount = ([regex]::Matches($errText, 'rotation failed: ')).Count
+        Assert-Equal 1 $failedCount 'exactly one failure line expected'
+        $lineCount = ([IO.File]::ReadAllLines($errPath)).Count
+
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 6KB
+        $lineCount2 = ([IO.File]::ReadAllLines($errPath)).Count
+        Assert-Equal $lineCount $lineCount2 'a repeated failure within 10 minutes must not add a line'
+
+        $lock.Dispose()
+        $lock = $null
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 6KB
+
+        Assert-True (Test-Path $current) 'the current file must be recreated'
+        Assert-True ((Get-Item $current).Length -gt 0) 'the recreated current file must not be empty'
+        $segments = @(Get-ChildItem $dir -Filter 'gpu-watch-*.csv' -File)
+        Assert-Equal 1 $segments.Count 'rotation must create exactly one segment'
+        Assert-Equal 3072 $segments[0].Length 'the segment must hold the old current file'
+        $ev = [IO.File]::ReadAllText((Join-Path $dir 'events.log'))
+        Assert-True ($ev.Contains('---- log rotated: ' + $segments[0].Name + ' ----')) 'events.log has no rotation line'
+
+        $errText = [IO.File]::ReadAllText($errPath)
+        $errLines = ([IO.File]::ReadAllLines($errPath)).Count
+        $okCount = ([regex]::Matches($errText, 'rotation ok: ')).Count
+        Assert-Equal 2 $errLines 'watch-errors.log must hold one failure and one ok line'
+        Assert-Equal 1 $okCount 'exactly one "rotation ok" line expected'
+        Assert-True ($errText -match 'rotation ok: gpu-watch\.csv') 'no "rotation ok" line for gpu-watch.csv'
+    } finally {
+        if ($lock) { $lock.Dispose() }
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Reset-Findings
 Write-Host ''
 $total = $script:Passed + $script:Failed

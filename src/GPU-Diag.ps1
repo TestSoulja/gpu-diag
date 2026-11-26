@@ -36,6 +36,10 @@ $script:Version        = '1.5.6'
 # 100 MB of .csv/.log (about 25 days at the measured ~4 MB per day).
 $script:WatchSegmentMaxBytes = 10MB
 $script:WatchLogsMaxBytes    = 100MB
+# A failed rotation is written to watch-errors.log at most once per 10 minutes
+# per file; a later successful rotation writes one "rotation ok" line.
+$script:WatchRotationFailure = @{}
+$script:WatchRotationRetrySeconds = 600
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -1497,6 +1501,8 @@ function New-RuAdviceText {
     L '    watch\thermal-<дата>.csv    то же самое для thermal.csv;'
     L '    watch\events.log          только системные события в моменты сбоев:'
     L '                              TDR, WHEA, Kernel-Power 41, синие экраны;'
+    L '    watch\watch-errors.log    ошибки логгера и неудачные попытки ротации'
+    L '                              (rotation failed, не чаще раза в 10 минут);'
     L '    watch\state.json          служебная отметка, до какого места'
     L '                              прочитан журнал;'
     L '    System.evtx               журнал Windows за последние дни, если'
@@ -1508,6 +1514,12 @@ function New-RuAdviceText {
     L ''
     L '  Часть файлов появляется только после фоновой записи: если записи'
     L '  ещё не было, в ZIP будет только отчёт — это нормально.'
+    L ''
+    L '  Потолок 100 МБ держится за счёт удаления старых кусков записи. Сами'
+    L '  events.log и watch-errors.log не удаляются никогда, поэтому в крайнем'
+    L '  случае папка логов может быть больше 100 МБ. Если ротация не удалась'
+    L '  (файл занят), в watch-errors.log будет строка rotation failed; после'
+    L '  успешной — rotation ok.'
     L ''
 
     L 'ЧТО ДЕЛАТЬ С АРХИВОМ'
@@ -1842,7 +1854,22 @@ function Invoke-WatchRotation {
         }
         try {
             Move-Item -LiteralPath $current -Destination $segment -Force -ErrorAction Stop
-        } catch { continue }
+        } catch {
+            $now = Get-Date
+            $last = $script:WatchRotationFailure[$current]
+            if ($null -eq $last -or ($now - $last).TotalSeconds -ge $script:WatchRotationRetrySeconds) {
+                Add-Utf8Line -Path (Join-Path $Dir 'watch-errors.log') -Line ("{0}  rotation failed: {1}: {2}" -f `
+                    $now.ToString('yyyy-MM-dd HH:mm:ss'), (Split-Path $current -Leaf), $_.Exception.Message)
+                $script:WatchRotationFailure[$current] = $now
+            }
+            continue
+        }
+
+        if ($script:WatchRotationFailure.ContainsKey($current)) {
+            Add-Utf8Line -Path (Join-Path $Dir 'watch-errors.log') -Line ("{0}  rotation ok: {1}" -f `
+                (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), (Split-Path $current -Leaf))
+            $script:WatchRotationFailure.Remove($current)
+        }
 
         Add-Utf8Line -Path (Join-Path $Dir 'events.log') -Line ("{0}  ---- log rotated: {1} ----" -f `
             (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), (Split-Path $segment -Leaf))

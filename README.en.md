@@ -60,15 +60,20 @@ failure). It runs from a stable copy at `%LOCALAPPDATA%\GPU-Diag\engine\GPU-Diag
 survives reboots, moving or replacing the unpacked folder; the engine version never downgrades.
 Files in `%LOCALAPPDATA%\GPU-Diag`: `gpu-watch.csv` (GPU telemetry about every 5 s incl. PCIe
 gen/width + active window title), `thermal.csv` (CPU temp/clock about every 5 s), `events.log`
-(relevant system events with GPU/CPU/PCIe context at that moment).
+(relevant system events with GPU/CPU/PCIe context at that moment), `watch-errors.log`
+(logger errors including a failed rotation).
 
 Logs rotate by themselves. When `gpu-watch.csv` or `thermal.csv` reaches 10 MB it is renamed
 to `gpu-watch-<date>-<time>.csv` (or `thermal-...`) and logging continues in a fresh current
 file. The whole log folder is capped at 100 MB: after a rotation the oldest segments are
 deleted until the total `.csv` + `.log` size is at or below the cap. The current files,
 `state.json`, `stop.flag`, `fix-backup.json`, `events.log` and `watch-errors.log` are never
-deleted. The 27.11.2026 measurement gave about 3.8 MB per day (4 369 records in 6.5 h, one
-record every 5.41 s), so 100 MB is roughly 25–26 days of history.
+deleted. The cap is held by deleting old segments; `events.log` and `watch-errors.log`
+themselves are never deleted, so in an extreme case the folder can exceed 100 MB. A failed
+rotation (file locked) is written to `watch-errors.log` as `rotation failed` at most once per
+10 minutes per file; a later success adds one `rotation ok` line. The 27.11.2026 measurement
+gave about 3.8 MB per day (4 369 records in 6.5 h, one record every 5.41 s), so 100 MB is
+roughly 25–26 days of history.
 
 The engine folder is write-restricted to Administrators at install time (the user keeps
 read/execute and can delete it), because the task runs that script elevated. This stops

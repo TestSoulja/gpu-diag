@@ -51,6 +51,19 @@ function Get-Advice {
     return ((New-RuAdviceText -FixStatus $Fix -WatchStatus $Watch) -join "`n")
 }
 
+function New-SizedFile {
+    param([string]$Path, [int]$Bytes, [string]$Fill = 'x')
+    $sb = New-Object System.Text.StringBuilder
+    while ($sb.Length -lt $Bytes) { [void]$sb.Append($Fill) }
+    [IO.File]::WriteAllText($Path, $sb.ToString(0, $Bytes), (New-Object System.Text.UTF8Encoding($false)))
+}
+
+function Get-FileState {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
+    return ([Convert]::ToBase64String([IO.File]::ReadAllBytes($Path)))
+}
+
 function Get-TreeState {
     param([string]$Path)
     if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
@@ -341,6 +354,111 @@ Test-Case 'real menu opens and exits on 0 without writing files' {
     Assert-True ($out -match 'DO EVERYTHING') 'menu output is missing the "DO EVERYTHING" line'
     Assert-Equal $beforeDesk (Get-TreeState $desk) 'ACTION-RU.txt changed or appeared'
     Assert-Equal $beforeLog (Get-TreeState $logDir) '%LOCALAPPDATA%\GPU-Diag changed or appeared'
+}
+
+Test-Case 'Test-WatchNeedsRotate uses the >= boundary' {
+    Assert-Equal $false (Test-WatchNeedsRotate -Length 0 -Max 1024) '0 is below the limit'
+    Assert-Equal $false (Test-WatchNeedsRotate -Length 1023 -Max 1024) 'Max-1 is below the limit'
+    Assert-Equal $true (Test-WatchNeedsRotate -Length 1024 -Max 1024) 'Max itself must rotate'
+    Assert-Equal $true (Test-WatchNeedsRotate -Length 1025 -Max 1024) 'Max+1 must rotate'
+}
+
+Test-Case 'rotation renames the current file, trims the oldest segment and keeps service files' {
+    $dir = Join-Path $env:TEMP ('gpu-diag-rot-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    try {
+        $statePath = Join-Path $dir 'state.json'
+        $flagPath = Join-Path $dir 'stop.flag'
+        $fixPath = Join-Path $dir 'fix-backup.json'
+        [IO.File]::WriteAllText($statePath, '{"lastRecordId":42}')
+        [IO.File]::WriteAllText($fixPath, '{"keep":"me"}')
+        [IO.File]::WriteAllBytes($flagPath, @())
+
+        $old1 = Join-Path $dir 'gpu-watch-20260101-010101.csv'
+        $old2 = Join-Path $dir 'gpu-watch-20260101-020202.csv'
+        $old3 = Join-Path $dir 'gpu-watch-20260101-030303.csv'
+        New-SizedFile $old1 2048 'a'
+        New-SizedFile $old2 2048 'b'
+        New-SizedFile $old3 2048 'c'
+        (Get-Item $old1).LastWriteTime = (Get-Date).AddHours(-3)
+        (Get-Item $old2).LastWriteTime = (Get-Date).AddHours(-2)
+        (Get-Item $old3).LastWriteTime = (Get-Date).AddHours(-1)
+
+        $current = Join-Path $dir 'gpu-watch.csv'
+        New-SizedFile $current 2048 'n'
+        (Get-Item $current).LastWriteTime = (Get-Date).AddMinutes(-5)
+
+        $stateBefore = Get-FileState $statePath
+        $flagBefore = Get-FileState $flagPath
+        $fixBefore = Get-FileState $fixPath
+
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 6KB
+
+        Assert-Equal $fixBefore (Get-FileState $fixPath) 'fix-backup.json changed'
+        Assert-Equal $stateBefore (Get-FileState $statePath) 'state.json changed'
+        Assert-Equal $flagBefore (Get-FileState $flagPath) 'stop.flag changed'
+
+        Assert-True (-not (Test-Path $old1)) 'the oldest segment must be deleted'
+        Assert-True (Test-Path $old3) 'a newer segment must survive while the cap allows it'
+        Assert-True (Test-Path $current) 'the current file must be recreated'
+        Assert-True ((Get-Item $current).Length -gt 0) 'the recreated current file must not be empty'
+
+        $segments = @(Get-ChildItem $dir -Filter 'gpu-watch-*.csv' -File)
+        Assert-True ($segments.Count -ge 1) 'rotation must leave at least one segment'
+        foreach ($s in $segments) {
+            Assert-True ($s.Name -match '^gpu-watch-\d{8}-\d{6}(-\d+)?\.csv$') ('bad segment name: ' + $s.Name)
+        }
+        $newest = @($segments | Sort-Object LastWriteTime -Descending | Select-Object -First 1)[0]
+        Assert-Equal 2048 $newest.Length 'the newest segment is the renamed current file'
+    } finally {
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'a current file larger than the total cap is rotated, never deleted' {
+    $dir = Join-Path $env:TEMP ('gpu-diag-rotbig-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    try {
+        $old = Join-Path $dir 'gpu-watch-20260101-000000.csv'
+        New-SizedFile $old 3072 'o'
+        (Get-Item $old).LastWriteTime = (Get-Date).AddHours(-2)
+
+        $current = Join-Path $dir 'gpu-watch.csv'
+        New-SizedFile $current 10240 'n'
+        (Get-Item $current).LastWriteTime = (Get-Date).AddMinutes(-1)
+
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 6KB
+
+        $big = @(Get-ChildItem $dir -Filter 'gpu-watch-*.csv' -File |
+            Where-Object { $_.Length -eq 10240 })
+        Assert-Equal 1 $big.Count 'the oversized current file must exist as a segment'
+        Assert-True (-not (Test-Path $old)) 'older segments must be trimmed first'
+        Assert-True (Test-Path $current) 'a fresh current file must be recreated'
+        Assert-True ((Get-Item $current).Length -gt 0) 'the fresh current file must not be empty'
+    } finally {
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
+}
+
+Test-Case 'events.log records a log rotation line' {
+    $dir = Join-Path $env:TEMP ('gpu-diag-rotev-' + [guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $dir | Out-Null
+    try {
+        $current = Join-Path $dir 'gpu-watch.csv'
+        New-SizedFile $current 3072 'e'
+        Invoke-WatchRotation -Dir $dir -SegmentMaxBytes 2KB -TotalMaxBytes 1MB
+
+        $ev = Join-Path $dir 'events.log'
+        Assert-True (Test-Path $ev) 'events.log was not created'
+        $text = [IO.File]::ReadAllText($ev)
+        $segment = @(Get-ChildItem $dir -Filter 'gpu-watch-*.csv' -File)[0]
+        $expected = '---- log rotated: ' + $segment.Name + ' ----'
+        Assert-True ($text.Contains($expected)) ('events.log has no rotation line: ' + $expected)
+        $lineCount = ([regex]::Matches($text, '---- log rotated: ')).Count
+        Assert-Equal 1 $lineCount 'exactly one rotation line expected'
+    } finally {
+        Remove-Item $dir -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 Reset-Findings

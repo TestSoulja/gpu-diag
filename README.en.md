@@ -58,11 +58,17 @@ Fast Startup at the next shutdown, `TdrDelay` at the next reboot whenever it hap
 Scheduled task `GPU-Diag-Watch` at logon (highest privileges, restarts up to 3 times on
 failure). It runs from a stable copy at `%LOCALAPPDATA%\GPU-Diag\engine\GPU-Diag.ps1`, so it
 survives reboots, moving or replacing the unpacked folder; the engine version never downgrades.
-Files in `%LOCALAPPDATA%\GPU-Diag`: `gpu-watch.csv` (5 s GPU telemetry incl. PCIe gen/width +
-active window title), `thermal.csv` (5 s CPU temp/clock), `events.log` (relevant system events
-with GPU/CPU/PCIe context at that moment). If the column set changes after an update, the old
-`gpu-watch.csv` is renamed to `gpu-watch-<timestamp>.csv` (kept, and packed into the ZIP)
-instead of being overwritten.
+Files in `%LOCALAPPDATA%\GPU-Diag`: `gpu-watch.csv` (GPU telemetry about every 5 s incl. PCIe
+gen/width + active window title), `thermal.csv` (CPU temp/clock about every 5 s), `events.log`
+(relevant system events with GPU/CPU/PCIe context at that moment).
+
+Logs rotate by themselves. When `gpu-watch.csv` or `thermal.csv` reaches 10 MB it is renamed
+to `gpu-watch-<date>-<time>.csv` (or `thermal-...`) and logging continues in a fresh current
+file. The whole log folder is capped at 100 MB: after a rotation the oldest segments are
+deleted until the total `.csv` + `.log` size is at or below the cap. The current files,
+`state.json`, `stop.flag`, `fix-backup.json`, `events.log` and `watch-errors.log` are never
+deleted. The 27.11.2026 measurement gave about 3.8 MB per day (4 369 records in 6.5 h, one
+record every 5.41 s), so 100 MB is roughly 25–26 days of history.
 
 The engine folder is write-restricted to Administrators at install time (the user keeps
 read/execute and can delete it), because the task runs that script elevated. This stops

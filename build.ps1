@@ -8,11 +8,11 @@ $ErrorActionPreference = 'Stop'
 if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot 'dist' }
 $src = Join-Path $PSScriptRoot 'src'
 
-# Локальное время релизного коммита 1.5.5: 2026-11-27 00:42:00 +03:00.
+# Локальное время релизного коммита 1.5.6: 2026-11-27 01:30:00 +03:00.
 # Every archive entry gets this timestamp, so repeat builds of the same three
 # sources produce the same bytes regardless of checkout mtimes. ZIP keeps no
 # time zone and stores 2-second granularity; the stamp is written as-is.
-$EntryStamp = [DateTimeOffset]::Parse('2026-11-27T00:42:00+03:00', [Globalization.CultureInfo]::InvariantCulture)
+$EntryStamp = [DateTimeOffset]::Parse('2026-11-27T01:30:00+03:00', [Globalization.CultureInfo]::InvariantCulture)
 
 $required = 'GPU-Diag.ps1', 'START-HERE.bat', 'README-RU.txt'
 foreach ($f in $required) {

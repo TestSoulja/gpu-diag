@@ -13,8 +13,8 @@
                 autostart + overclock software. Produces a case ZIP:
                 report + telemetry for whoever analyses the problem.
     * Watch   : lightweight background logger (runs at every logon via a
-                scheduled task) that records GPU telemetry every 5 s and
-                every relevant system event. Catches the moment of the drop.
+                scheduled task) that records GPU telemetry about every 5 s
+                and every relevant system event. Catches the moment of the drop.
     * Fix     : a few safe, reversible changes (PCIe power saving, USB
                 selective suspend, monitor timeout, Fast Startup, TDR delay).
                 Full backup is written first; Revert puts everything back.
@@ -31,7 +31,11 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5.5'
+$script:Version        = '1.5.6'
+# Watch log rotation: one segment is 10 MB; the whole log folder keeps at most
+# 100 MB of .csv/.log (about 25 days at the measured ~4 MB per day).
+$script:WatchSegmentMaxBytes = 10MB
+$script:WatchLogsMaxBytes    = 100MB
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -1481,10 +1485,16 @@ function New-RuAdviceText {
     L '                              питание, настройки Windows, события'
     L '                              журнала, раздел FINDINGS с выводами;'
     L '    ACTION-RU.txt             этот же разбор простыми словами;'
-    L '    watch\gpu-watch.csv       запись каждые 5 секунд: температура,'
+    L '    watch\gpu-watch.csv       запись примерно раз в 5 секунд: температура,'
     L '                              загрузка, частоты, питание, PCIe, мониторы,'
     L '                              заголовок активного окна;'
-    L '    watch\thermal.csv         температура и частота процессора, каждые 5 с;'
+    L '    watch\thermal.csv         температура и частота процессора, примерно'
+    L '                              раз в 5 секунд;'
+    L '    watch\gpu-watch-<дата>.csv  старые куски записи после ротации: текущий'
+    L '                              файл переименовывается при 10 МБ; хранятся'
+    L '                              самые свежие куски, пока все .csv и .log'
+    L '                              вместе не больше 100 МБ;'
+    L '    watch\thermal-<дата>.csv    то же самое для thermal.csv;'
     L '    watch\events.log          только системные события в моменты сбоев:'
     L '                              TDR, WHEA, Kernel-Power 41, синие экраны;'
     L '    watch\state.json          служебная отметка, до какого места'
@@ -1506,6 +1516,10 @@ function New-RuAdviceText {
     L '  хочешь — оставь себе, хочешь — покажи специалисту или знакомому.'
     L '  Файл самодостаточен: открывать его и что-то добавлять не нужно,'
     L '  просто отдай целиком.'
+    L ''
+    L '  Внутри могут быть старые куски записи gpu-watch-<дата>.csv: это'
+    L '  история до ротации. Она хранится, пока вся папка логов не больше'
+    L '  100 МБ; более старые куски удаляются сами.'
     L ''
     L '  Когда монитор погаснет — запиши время: это самый полезный факт'
     L '  для разбора. Фоновую запись останавливать не надо, пока'
@@ -1798,6 +1812,77 @@ function Format-WatchCsvRow {
     return ($vals -join ',') + ',"' + ($Window -replace '"', "'") + '"'
 }
 
+function Test-WatchNeedsRotate {
+    param([int64]$Length, [int64]$Max)
+    return ($Length -ge $Max)
+}
+
+function Invoke-WatchRotation {
+    param(
+        [string]$Dir,
+        [int64]$SegmentMaxBytes = $script:WatchSegmentMaxBytes,
+        [int64]$TotalMaxBytes = $script:WatchLogsMaxBytes
+    )
+    if (-not (Test-Path -LiteralPath $Dir)) { return }
+
+    $rotated = $false
+    $fresh = New-Object System.Collections.Generic.List[string]
+    foreach ($base in @('gpu-watch', 'thermal')) {
+        $current = Join-Path $Dir ($base + '.csv')
+        if (-not (Test-Path -LiteralPath $current)) { continue }
+        try { $len = (Get-Item -LiteralPath $current -ErrorAction Stop).Length } catch { continue }
+        if (-not (Test-WatchNeedsRotate -Length $len -Max $SegmentMaxBytes)) { continue }
+
+        $stamp = (Get-Date -Format 'yyyyMMdd-HHmmss')
+        $segment = Join-Path $Dir ($base + '-' + $stamp + '.csv')
+        $n = 1
+        while (Test-Path -LiteralPath $segment) {
+            $segment = Join-Path $Dir ($base + '-' + $stamp + '-' + $n + '.csv')
+            $n++
+        }
+        try {
+            Move-Item -LiteralPath $current -Destination $segment -Force -ErrorAction Stop
+        } catch { continue }
+
+        Add-Utf8Line -Path (Join-Path $Dir 'events.log') -Line ("{0}  ---- log rotated: {1} ----" -f `
+            (Get-Date).ToString('yyyy-MM-dd HH:mm:ss'), (Split-Path $segment -Leaf))
+        # Recreate the current file with its header so the next append has a
+        # valid CSV and the live file never stays missing after a rotation.
+        $header = $(if ($base -eq 'thermal') {
+            'timestamp,cpu_temp_c,cpu_load_pct,cpu_mhz,cpu_pct_of_max'
+        } else {
+            Get-WatchCsvHeader
+        })
+        Add-Utf8Line -Path $current -Line $header
+        $fresh.Add($segment)
+        $rotated = $true
+    }
+
+    if (-not $rotated) { return }
+
+    # Trim only files produced by rotation. Current files and service files
+    # (state.json, stop.flag, fix-backup.json, events.log, watch-errors.log)
+    # are never deleted.
+    $allFiles = @(Get-ChildItem -LiteralPath $Dir -File -ErrorAction SilentlyContinue)
+    $total = 0
+    foreach ($f in $allFiles) {
+        if ($f.Extension -in '.csv', '.log') { $total += $f.Length }
+    }
+    if ($total -le $TotalMaxBytes) { return }
+    $segments = @($allFiles |
+        Where-Object { $_.Name -like 'gpu-watch-*.csv' -or $_.Name -like 'thermal-*.csv' } |
+        Where-Object { -not ($fresh -contains $_.FullName) } |
+        Sort-Object LastWriteTime, Name)
+    foreach ($f in $segments) {
+        if ($total -le $TotalMaxBytes) { break }
+        $size = $f.Length
+        try {
+            Remove-Item -LiteralPath $f.FullName -Force -ErrorAction Stop
+            $total -= $size
+        } catch { }
+    }
+}
+
 function Invoke-Watch {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     $csv      = Join-Path $LogDir 'gpu-watch.csv'
@@ -1847,6 +1932,7 @@ function Invoke-Watch {
             $s = Get-NvSample -Smi $smi
             $line = Format-WatchCsvRow -Stamp $stamp -Sample $s -MonCount $monCount -Window $win
             Add-Utf8Line -Path $csv -Line $line
+            Invoke-WatchRotation -Dir $LogDir
 
             if ($i % 6 -eq 0) {
                 $new = @(Get-WatchEvents -AfterRecordId $lastId)

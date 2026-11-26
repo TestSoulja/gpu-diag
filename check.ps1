@@ -169,7 +169,8 @@ try {
             throw ("GPU-Diag.ps1 in the archive differs from src (archive {0}, src {1})" -f $hexA, $hexB)
         }
         $ok5 = $true
-        $detail5 = ("3 files, GPU-Diag.ps1 sha256 {0}..., zip {1} bytes" -f $hexA.Substring(0, 16), (Get-Item $zip).Length)
+        $zipHash = (Get-FileHash -Path $zip -Algorithm SHA256).Hash
+        $detail5 = ("3 files, zip {0} bytes, sha256 {1}" -f (Get-Item $zip).Length, $zipHash)
     } finally {
         $za.Dispose()
     }

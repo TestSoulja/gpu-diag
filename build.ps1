@@ -8,7 +8,9 @@ $ErrorActionPreference = 'Stop'
 if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot 'dist' }
 $src = Join-Path $PSScriptRoot 'src'
 
-# Локальное время итогового коммита 1.5.6: 2026-11-27 01:55:00 +03:00.
+# Метка архива: локальное время коммита, в котором появился код версии
+# (1.5.6: 083a37d, 2026-11-27 01:55:00 +03:00). Более поздние docs-коммиты
+# метку не меняют; тег может стоять на одном из них.
 # Every archive entry gets this timestamp, so repeat builds of the same three
 # sources produce the same bytes regardless of checkout mtimes. ZIP keeps no
 # time zone and stores 2-second granularity; the stamp is written as-is.
@@ -36,8 +38,9 @@ New-Item -ItemType Directory -Force -Path $OutDir | Out-Null
 $zip = Join-Path $OutDir 'GPU-Diag.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
-# Deterministic archive: all three entries get the same timestamp, the date of
-# the release commit (see $EntryStamp at the top).
+# Deterministic archive: all three entries get the same timestamp, the time of
+# the commit that introduced the version's code (see $EntryStamp at the top).
+# Docs commits after it do not change the stamp; the tag may sit on one.
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 

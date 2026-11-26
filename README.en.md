@@ -5,9 +5,12 @@
 A small PowerShell toolkit for Windows 10/11 that helps find why a monitor
 occasionally loses signal (black screen / "no signal") while the GPU is under load.
 
-It installs nothing, makes no network calls, deletes nothing. It produces a report,
-records background telemetry, and can apply a few safe, fully reversible power
-settings changes.
+It installs no services or drivers. It registers the `GPU-Diag-Watch` scheduled task and
+copies its engine into the user profile (`%LOCALAPPDATA%\GPU-Diag\engine`). It makes no
+network calls of its own: the only outbound request is the driver update search through the
+Windows Update service, and Windows itself performs it. It does not delete logs, reports or
+dumps. It produces a report, records background telemetry, and can apply a few safe, fully
+reversible power settings changes.
 
 ## Quick start
 
@@ -66,7 +69,18 @@ read/execute and can delete it), because the task runs that script elevated. Thi
 casual or accidental replacement, not a determined local attacker: the profile owner can
 always restore their own permissions.
 
-Note: active window titles end up in the CSV — review before sharing the archive.
+## Privacy
+
+The script makes no network requests. The only exception is the driver update search through
+the local Windows Update service (Windows itself performs the request).
+
+Note: active window titles end up in `gpu-watch.csv` — there may be site and chat names.
+Review the file before sharing the archive.
+
+Note about dumps: the ZIP copies dumps from `C:\Windows\Minidump` (`minidumps\`) — they are
+memory fragments. Review them before sharing the archive with third parties, just like
+`gpu-watch.csv`. `live-kernel-reports.txt` contains only a list of `LiveKernelReports` files
+(name, size, path); the dumps themselves are not copied from there.
 
 ## Uninstall
 

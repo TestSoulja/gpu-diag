@@ -51,6 +51,19 @@ function Get-Advice {
     return ((New-RuAdviceText -FixStatus $Fix -WatchStatus $Watch) -join "`n")
 }
 
+function Get-TreeState {
+    param([string]$Path)
+    if (-not (Test-Path -LiteralPath $Path)) { return 'absent' }
+    $item = Get-Item -LiteralPath $Path
+    if (-not $item.PSIsContainer) {
+        return ('file|' + $item.Length + '|' + $item.LastWriteTimeUtc.Ticks)
+    }
+    $parts = @(Get-ChildItem -LiteralPath $Path -Recurse -File -Force -ErrorAction SilentlyContinue |
+        Sort-Object FullName |
+        ForEach-Object { $_.FullName + '|' + $_.Length + '|' + $_.LastWriteTimeUtc.Ticks })
+    return ($parts -join "`n")
+}
+
 $adviceCombos = @(
     @{ F = 'applied'; W = 'ok' },
     @{ F = 'applied'; W = 'session' },
@@ -286,6 +299,48 @@ Test-Case 'harness catches a deliberately false expectation' {
         $caught = $true
     }
     Assert-True $caught 'the harness did not detect the false expectation'
+}
+
+Test-Case 'real menu opens and exits on 0 without writing files' {
+    $scriptPath = (Resolve-Path (Join-Path $PSScriptRoot '..\src\GPU-Diag.ps1')).Path
+    $desk = Join-Path ([Environment]::GetFolderPath('Desktop')) 'ACTION-RU.txt'
+    $logDir = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
+    $beforeDesk = Get-TreeState $desk
+    $beforeLog = Get-TreeState $logDir
+
+    $psi = New-Object System.Diagnostics.ProcessStartInfo
+    $psi.FileName = Join-Path $PSHOME 'powershell.exe'
+    $psi.Arguments = '-NoProfile -ExecutionPolicy Bypass -File "' + $scriptPath + '" -Mode Menu'
+    $psi.UseShellExecute = $false
+    $psi.RedirectStandardInput = $true
+    $psi.RedirectStandardOutput = $true
+    $psi.RedirectStandardError = $true
+    $psi.CreateNoWindow = $true
+    $psi.EnvironmentVariables['GPU_DIAG_NOELEVATE'] = '1'
+    $psi.EnvironmentVariables.Remove('GPU_DIAG_LIB')
+
+    $proc = [Diagnostics.Process]::Start($psi)
+    try {
+        $outTask = $proc.StandardOutput.ReadToEndAsync()
+        $errTask = $proc.StandardError.ReadToEndAsync()
+        $proc.StandardInput.WriteLine('0')
+        $proc.StandardInput.Close()
+        if (-not $proc.WaitForExit(20000)) {
+            try { $proc.Kill() } catch { }
+            $null = $proc.WaitForExit(2000)
+            throw 'menu did not exit within 20 s (timeout)'
+        }
+        $out = $outTask.GetAwaiter().GetResult()
+        $err = $errTask.GetAwaiter().GetResult()
+        $code = $proc.ExitCode
+    } finally {
+        $proc.Dispose()
+    }
+
+    Assert-Equal 0 $code ('menu exit code; stderr: ' + ($err.Trim()))
+    Assert-True ($out -match 'DO EVERYTHING') 'menu output is missing the "DO EVERYTHING" line'
+    Assert-Equal $beforeDesk (Get-TreeState $desk) 'ACTION-RU.txt changed or appeared'
+    Assert-Equal $beforeLog (Get-TreeState $logDir) '%LOCALAPPDATA%\GPU-Diag changed or appeared'
 }
 
 Reset-Findings

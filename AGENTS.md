@@ -42,11 +42,12 @@
 
 ## Тесты
 
-- Любая правка `src/**` требует зелёного `tests\run.ps1`: `TESTS: N/N PASS`, код 0.
+- Любая правка `src/**` требует зелёного `check.ps1`: проверка 8 сама запускает
+  `tests\run.ps1` отдельным процессом и краснеет, если тесты не вернули exit 0.
 - Тесты живут в `tests\` и в архив не входят: `build.ps1` упаковывает только три
   файла `src`, состав архива проверяет `check.ps1`.
-- Тесты не запускают меню, не ставят задач, не читают журналы и не требуют прав
-  администратора; сеть и `dist` не трогают.
+- `tests\run.ps1` не запускает пункты 1–6 меню: одиннадцатый тест только открывает
+  меню, подаёт `0` и проверяет выход. Задачи, журналы, сеть и права не трогаются.
 
 ## Зависимости и сервисы
 
@@ -58,8 +59,8 @@
 ## Файлы и кодировки
 
 - Скрипты PowerShell — UTF-8 с BOM: без BOM Windows PowerShell 5.1 читает кириллицу
-  как cp1251 и падает на разборе. Это `src/*.ps1`, `src/*.txt` и `check.ps1`.
-  `src/START-HERE.bat` — намеренно без BOM: BOM ломает первую строку `.bat`.
+  как cp1251 и падает на разборе. Это `src/*.ps1`, `src/*.txt`, `check.ps1` и
+  `build.ps1`. `src/START-HERE.bat` — намеренно без BOM: BOM ломает первую строку `.bat`.
 - Переводы строк — по `.gitattributes`: CRLF для `.ps1`/`.bat`/`.txt`, LF для `.md`.
 - Решения по git — по `$LASTEXITCODE`, а не по stderr: git пишет прогресс в stderr,
   а `$ErrorActionPreference = 'Stop'` считает это падением.
@@ -77,7 +78,6 @@
 
 ```powershell
 cd C:\VS\gpu-diag-staging
-powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\check.ps1
 git status -sb
 git rev-parse HEAD; git rev-parse origin/main

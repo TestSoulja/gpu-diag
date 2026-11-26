@@ -15,6 +15,7 @@
        the archive is byte-identical to src/GPU-Diag.ps1
     6. if tag v<version> exists, it is annotated and points at HEAD
     7. README.md and README.en.md do not carry the version
+    8. tests/run.ps1 exits 0 and prints "TESTS: N/N PASS"
 #>
 [CmdletBinding()]
 param()
@@ -243,6 +244,37 @@ $ok7 = ($readmeFail.Count -eq 0)
 $detail7 = if ($ok7) { 'README.md and README.en.md carry no version' }
            else { ($readmeFail -join '; ') }
 Report-Check '7 readmes' $ok7 $detail7
+
+# -------------------------------------------------------------------- 8. tests
+$testsScript = Join-Path $root 'tests\run.ps1'
+$ok8 = $false
+$detail8 = ''
+if (-not (Test-Path $testsScript)) {
+    $detail8 = 'tests\run.ps1 not found'
+} else {
+    try {
+        $testOut = @(& (Join-Path $PSHOME 'powershell.exe') -NoProfile -ExecutionPolicy Bypass -File $testsScript 2>&1)
+        $testCode = $LASTEXITCODE
+        $testLine = ''
+        $passedCount = ''
+        $totalCount = ''
+        foreach ($line in $testOut) {
+            $m = [regex]::Match("$line", '^\s*TESTS:\s+(\d+)/(\d+)\s+PASS\s*$')
+            if ($m.Success) {
+                $testLine = $m.Value.Trim()
+                $passedCount = $m.Groups[1].Value
+                $totalCount = $m.Groups[2].Value
+            }
+        }
+        $ok8 = ($testCode -eq 0 -and $testLine -and $passedCount -eq $totalCount)
+        if ($testLine) { $detail8 = ("exit {0}; {1}" -f $testCode, $testLine) }
+        else { $detail8 = ("exit {0}; no TESTS line in the output" -f $testCode) }
+    } catch {
+        $ok8 = $false
+        $detail8 = 'tests could not run: ' + $_.Exception.Message
+    }
+}
+Report-Check '8 tests' $ok8 $detail8
 
 # ------------------------------------------------------------------ summary
 Write-Host ''

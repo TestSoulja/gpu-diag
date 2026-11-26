@@ -194,11 +194,30 @@ try {
         if ($type -ne 'tag') {
             $ok6 = $false
             $detail6 = ("tag {0} is not annotated (object type: {1})" -f $tag, $type)
-        } elseif ($target -ne $head) {
-            $ok6 = $false
-            $detail6 = ("tag {0} points at {1}, HEAD is {2}" -f $tag, $target.Substring(0, 7), $head.Substring(0, 7))
-        } else {
+        } elseif ($target -eq $head) {
             $detail6 = ("tag {0} is annotated and points at HEAD ({1})" -f $tag, $head.Substring(0, 7))
+        } else {
+            # Docs commits after a release move HEAD; that is allowed while src/
+            # is still exactly the tagged (released) source.
+            $ancestor = $false
+            $srcSame = $false
+            $null = & git -C $root merge-base --is-ancestor $target $head 2>$null
+            if ($LASTEXITCODE -eq 0) {
+                $ancestor = $true
+                $null = & git -C $root diff --quiet $target $head -- src 2>$null
+                $srcSame = ($LASTEXITCODE -eq 0)
+            }
+            if ($ancestor -and $srcSame) {
+                $detail6 = ("tag {0} is annotated; src/ identical to HEAD, docs commits since {1}" -f `
+                    $tag, $target.Substring(0, 7))
+            } elseif (-not $ancestor) {
+                $ok6 = $false
+                $detail6 = ("tag {0} ({1}) is not an ancestor of HEAD ({2})" -f $tag, $target.Substring(0, 7), $head.Substring(0, 7))
+            } else {
+                $ok6 = $false
+                $detail6 = ("tag {0} points at {1} and src/ differs from HEAD - the version was not raised" -f `
+                    $tag, $target.Substring(0, 7))
+            }
         }
     }
 } catch {

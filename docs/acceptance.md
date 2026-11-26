@@ -16,7 +16,7 @@
 | `GPU-Diag.ps1` в архиве побайтово равен `src/GPU-Diag.ps1` | SHA-256 записи ZIP = SHA-256 файла `src` (тест 5 в `check.ps1`) | 26.11.2026 |
 | Локальная сборка совпала с опубликованным ассетом v1.5.4 | `dist\GPU-Diag.zip` — 38 635 Б, SHA-256 `03c8380640675a18054b9288961001b3e3b4529a47459876df19c979ad61990d`; GitHub API `/releases/tags/v1.5.4`: ассет `GPU-Diag.zip`, size 38 635, digest `sha256:03c83806…ad61990d` | 26.11.2026 |
 | Сборка воспроизводима | свежий прогон `.\build.ps1 -OutDir <временная папка>` дал тот же самый файл: 38 635 Б, SHA-256 `03c83806…ad61990d` | 26.11.2026 |
-| Тег v1.5.4 аннотированный и на HEAD | `git cat-file -t v1.5.4` → `tag`; `git rev-list -n1 v1.5.4` → `f6027f4` = `HEAD` | 26.11.2026 |
+| Тег v1.5.4 аннотированный и указывает на релизный коммит | `git cat-file -t v1.5.4` → `tag`; `git rev-list -n1 v1.5.4` → `f6027f4`; после него только README/docs-коммиты, `git diff v1.5.4 HEAD -- src/` пуст | 26.11.2026 |
 | Кодировки и переводы строк | `git ls-files --eol`: `src/GPU-Diag.ps1`, `src/README-RU.txt`, `src/START-HERE.bat` — `w/crlf`; `*.md` — `w/lf`; `w/mixed` нет. BOM есть у `src/GPU-Diag.ps1` и `src/README-RU.txt` | 26.11.2026 |
 | В `src` нет адресов, почты, путей профиля и логина владельца | `check.ps1` тест 3: `https?://`, e-mail, `C:\Users\`, `TestSoulja` — 0 совпадений | 26.11.2026 |
 | Зависимостей нет, файлов архива в репозитории нет | `git ls-files` — 12 файлов; ни `.zip`, ни `package.json`/`requirements.txt`/`*.csproj` | 26.11.2026 |

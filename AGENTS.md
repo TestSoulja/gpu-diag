@@ -40,6 +40,14 @@
   стража в него не пишутся, версию не поднимают.
 - Опубликованные релизы 1.2–1.5.4 не переписываются задним числом: ни тег, ни ассет.
 
+## Тесты
+
+- Любая правка `src/**` требует зелёного `tests\run.ps1`: `TESTS: N/N PASS`, код 0.
+- Тесты живут в `tests\` и в архив не входят: `build.ps1` упаковывает только три
+  файла `src`, состав архива проверяет `check.ps1`.
+- Тесты не запускают меню, не ставят задач, не читают журналы и не требуют прав
+  администратора; сеть и `dist` не трогают.
+
 ## Зависимости и сервисы
 
 - Зависимостей нет и не добавлять: только Windows PowerShell 5.1 и встроенные средства
@@ -69,6 +77,7 @@
 
 ```powershell
 cd C:\VS\gpu-diag-staging
+powershell -NoProfile -ExecutionPolicy Bypass -File .\tests\run.ps1
 powershell -NoProfile -ExecutionPolicy Bypass -File .\check.ps1
 git status -sb
 git rev-parse HEAD; git rev-parse origin/main

@@ -31,7 +31,7 @@ param(
 
 $ErrorActionPreference = 'Continue'
 $ProgressPreference    = 'SilentlyContinue'
-$script:Version        = '1.5.4'
+$script:Version        = '1.5.5'
 $script:NewestGpuPkgDate = $null
 $TaskName              = 'GPU-Diag-Watch'
 $LogDir                = Join-Path $env:LOCALAPPDATA 'GPU-Diag'
@@ -64,7 +64,9 @@ function Say { param([string]$Text) Write-Host $Text }
 
 # ---- elevation ------------------------------------------------------------
 $isAdmin = Test-Admin
-if (-not $isAdmin -and $Mode -ne 'Watch' -and -not $env:GPU_DIAG_NOELEVATE) {
+# Library mode (tests dot-source this file): declare functions only, never
+# relaunch elevated and never exit the caller's session.
+if ($env:GPU_DIAG_LIB -ne '1' -and -not $isAdmin -and $Mode -ne 'Watch' -and -not $env:GPU_DIAG_NOELEVATE) {
     $q = '"' + $PSCommandPath + '"'
     $argList = @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $q, '-Mode', $Mode)
     if ($OutRoot) { $argList += @('-OutRoot', ('"' + $OutRoot + '"')) }
@@ -1090,12 +1092,24 @@ function Export-RawEvents {
     }
     $md = 'C:\Windows\Minidump'
     if (Test-Path $md) {
-        $dumps = @(Get-ChildItem $md -Filter '*.dmp' -File -ErrorAction SilentlyContinue |
-            Sort-Object LastWriteTime -Descending | Select-Object -First 5)
-        if ($dumps.Count -gt 0) {
+        # Privacy and size: at most 5 newest dumps and at most 100 MB in total.
+        # Five ordinary minidumps are a few MB; 100 MB leaves a wide margin and
+        # keeps the ZIP small enough to hand over by hand.
+        $maxDumps = 5
+        $maxDumpBytes = 100MB
+        $picked = New-Object System.Collections.Generic.List[object]
+        $totalBytes = 0
+        foreach ($f in @(Get-ChildItem $md -Filter '*.dmp' -File -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending)) {
+            if ($picked.Count -ge $maxDumps) { break }
+            if (($totalBytes + $f.Length) -gt $maxDumpBytes) { continue }
+            $picked.Add($f)
+            $totalBytes += $f.Length
+        }
+        if ($picked.Count -gt 0) {
             $d = Join-Path $Dest 'minidumps'
             New-Item -ItemType Directory -Force -Path $d | Out-Null
-            foreach ($f in $dumps) { try { Copy-Item $f.FullName -Destination $d -Force -ErrorAction Stop } catch { } }
+            foreach ($f in $picked) { try { Copy-Item $f.FullName -Destination $d -Force -ErrorAction Stop } catch { } }
         }
     }
     $lkr = 'C:\Windows\LiveKernelReports'
@@ -1204,6 +1218,30 @@ function Get-RuStepText {
                 'Перезагрузи компьютер, когда будет удобно: Windows не закончил',
                 'установку драйвера или обновления.')
         }
+        'aspm' {
+            return @(
+                'Энергосбережение линии PCIe (ASPM) лучше выключить:',
+                '  это делает пункт 1 или 5 меню, вручную настраивать не нужно.')
+        }
+        'display-timeout' {
+            return @(
+                'Поставь отключение экрана «Никогда» на время проверки:',
+                '  Параметры -> Система -> Питание и спящий режим -> Экран -> Никогда.',
+                '  Пункт 1 или 5 меню делает это сам.')
+        }
+        'fast-startup' {
+            return @(
+                'Выключи «Быстрый запуск» Windows:',
+                '  Панель управления -> Электропитание -> Действия кнопок питания ->',
+                '  Изменение параметров, которые сейчас недоступны -> сними галочку',
+                '  «Включить быстрый запуск». Пункт 1 или 5 меню делает это сам.')
+        }
+        'tdr' {
+            return @(
+                'Не меняй TdrLevel и TdrDelay вручную:',
+                '  пункт 1 или 5 меню выставит таймаут драйвера 10 с и сохранит',
+                '  исходные значения, пункт 6 вернёт их обратно.')
+        }
         'logger' {
             return @(
                 'Оставь инструмент работать в фоне и пользуйся компьютером как обычно.',
@@ -1233,11 +1271,11 @@ function Get-RuFinding {
     if ($Line -match 'maximum frequency right now')                 { return @{ T = 'Процессор работает на пониженной частоте.'; S = 'cooling-cpu' } }
     if ($Line -match 'ACPI thermal zone')                           { return @{ T = 'Датчик материнской платы показывает высокую температуру.'; S = 'cooling-cpu' } }
     if ($Line -match 'processor speed limited by firmware')         { return @{ T = 'Windows фиксировал ограничение частоты процессора.'; S = 'cooling-cpu' } }
-    if ($Line -match 'PCIe ASPM power saving is enabled')           { return @{ T = 'Включено энергосбережение линии PCIe (ASPM).'; S = '' } }
-    if ($Line -match 'turns the display off after')                 { return @{ T = 'Windows выключает экран по таймеру.'; S = '' } }
-    if ($Line -match 'Fast Startup is ON')                          { return @{ T = 'Включён «Быстрый запуск» Windows.'; S = '' } }
-    if ($Line -match 'TdrLevel=0')                                  { return @{ T = 'Отключено восстановление после зависания драйвера.'; S = '' } }
-    if ($Line -match 'TdrDelay was already raised')                 { return @{ T = 'Таймаут драйвера уже кто-то увеличивал.'; S = '' } }
+    if ($Line -match 'PCIe ASPM power saving is enabled')           { return @{ T = 'Включено энергосбережение линии PCIe (ASPM).'; S = 'aspm' } }
+    if ($Line -match 'turns the display off after')                 { return @{ T = 'Windows выключает экран по таймеру.'; S = 'display-timeout' } }
+    if ($Line -match 'Fast Startup is ON')                          { return @{ T = 'Включён «Быстрый запуск» Windows.'; S = 'fast-startup' } }
+    if ($Line -match 'TdrLevel=0')                                  { return @{ T = 'Отключено восстановление после зависания драйвера.'; S = 'tdr' } }
+    if ($Line -match 'TdrDelay was already raised')                 { return @{ T = 'Таймаут драйвера уже кто-то увеличивал.'; S = 'tdr' } }
     if ($Line -match 'Display driver reset/error events')           { return @{ T = 'В журнале есть сбросы драйвера экрана.'; S = 'driver' } }
     if ($Line -match 'WHEA hardware error')                         { return @{ T = 'Аппаратные ошибки оборудования (WHEA).'; S = 'power' } }
     if ($Line -match 'Kernel-Power 41')                             { return @{ T = 'Были внезапные потери питания.'; S = 'power' } }
@@ -1444,7 +1482,8 @@ function New-RuAdviceText {
     L '                              журнала, раздел FINDINGS с выводами;'
     L '    ACTION-RU.txt             этот же разбор простыми словами;'
     L '    watch\gpu-watch.csv       запись каждые 5 секунд: температура,'
-    L '                              загрузка, частоты, питание, PCIe, мониторы;'
+    L '                              загрузка, частоты, питание, PCIe, мониторы,'
+    L '                              заголовок активного окна;'
     L '    watch\thermal.csv         температура и частота процессора, каждые 5 с;'
     L '    watch\events.log          только системные события в моменты сбоев:'
     L '                              TDR, WHEA, Kernel-Power 41, синие экраны;'
@@ -1452,7 +1491,8 @@ function New-RuAdviceText {
     L '                              прочитан журнал;'
     L '    System.evtx               журнал Windows за последние дни, если'
     L '                              хватило прав администратора;'
-    L '    minidumps\                дампы синих экранов, если они были;'
+    L '    minidumps\                до 5 свежих дампов синих экранов, не больше'
+    L '                              100 МБ суммарно, если они были;'
     L '    live-kernel-reports.txt   список отчётов LiveKernelEvent 141/117;'
     L '    GPU-Diag.ps1              программа, которая всё это собрала.'
     L ''
@@ -1740,6 +1780,24 @@ function Invoke-UninstallWatch {
     Say ' Background monitoring stopped. Logs are kept.'
 }
 
+function Get-WatchCsvHeader {
+    return 'timestamp,gpu,driver,temp_c,util_gpu_pct,util_mem_pct,mem_used_mb,power_w,power_limit_w,sm_clock_mhz,mem_clock_mhz,fan_pct,pstate,throttle_bits,throttle_names,monitors,pcie_gen,pcie_width,active_window'
+}
+
+function Format-WatchCsvRow {
+    param([string]$Stamp, $Sample, $MonCount, [string]$Window = '')
+    if ($null -eq $Window) { $Window = '' }
+    if ($Sample) {
+        $vals = @($Stamp, $Sample.Name, $Sample.Driver, $Sample.Temp, $Sample.UtilGpu, $Sample.UtilMem, $Sample.MemUsed, $Sample.Power,
+            $Sample.PowerLimit, $Sample.ClockSm, $Sample.ClockMem, $Sample.Fan, $Sample.PState, $Sample.Throttle,
+            (Convert-ThrottleBits $Sample.Throttle), $MonCount, $Sample.PcieGen, $Sample.PcieWidth)
+    } else {
+        $vals = @($Stamp) + (@('') * 17)
+        $vals[15] = $MonCount
+    }
+    return ($vals -join ',') + ',"' + ($Window -replace '"', "'") + '"'
+}
+
 function Invoke-Watch {
     New-Item -ItemType Directory -Force -Path $LogDir | Out-Null
     $csv      = Join-Path $LogDir 'gpu-watch.csv'
@@ -1750,7 +1808,7 @@ function Invoke-Watch {
     $errPath  = Join-Path $LogDir 'watch-errors.log'
     if (Test-Path $stopFlag) { Remove-Item $stopFlag -Force -ErrorAction SilentlyContinue }
 
-    $header = 'timestamp,gpu,driver,temp_c,util_gpu_pct,util_mem_pct,mem_used_mb,power_w,power_limit_w,sm_clock_mhz,mem_clock_mhz,fan_pct,pstate,throttle_bits,throttle_names,monitors,pcie_gen,pcie_width,active_window'
+    $header = Get-WatchCsvHeader
     if ((Test-Path $csv) -and (Get-Item $csv).Length -gt 0) {
         $oldHeader = ''
         try { $oldHeader = (Get-Content $csv -TotalCount 1) } catch { }
@@ -1787,15 +1845,7 @@ function Invoke-Watch {
             Add-Utf8Line -Path $thermCsv -Line (Get-ThermalSample)
             $win = Get-ForegroundTitle
             $s = Get-NvSample -Smi $smi
-            if ($s) {
-                $vals = @($stamp, $s.Name, $s.Driver, $s.Temp, $s.UtilGpu, $s.UtilMem, $s.MemUsed, $s.Power,
-                    $s.PowerLimit, $s.ClockSm, $s.ClockMem, $s.Fan, $s.PState, $s.Throttle,
-                    (Convert-ThrottleBits $s.Throttle), $monCount, $s.PcieGen, $s.PcieWidth)
-            } else {
-                $vals = @($stamp) + (@('') * 17)
-                $vals[15] = $monCount
-            }
-            $line = ($vals -join ',') + ',"' + ($win -replace '"', "'") + '"'
+            $line = Format-WatchCsvRow -Stamp $stamp -Sample $s -MonCount $monCount -Window $win
             Add-Utf8Line -Path $csv -Line $line
 
             if ($i % 6 -eq 0) {
@@ -1997,24 +2047,28 @@ function Show-Menu {
 # ----------------------------------------------------------------------------
 # dispatch
 # ----------------------------------------------------------------------------
-try {
-    switch ($Mode) {
-        'Menu'           { Show-Menu }
-        'Report'         { New-DiagPackage | Out-Null }
-        'Fix'            { Invoke-Fix | Out-Null }
-        'Revert'         { Invoke-Revert }
-        'InstallWatch'   { Invoke-InstallWatch }
-        'UninstallWatch' { Invoke-UninstallWatch }
-        'Watch'          { Invoke-Watch }
-        'Finish'         { Invoke-UninstallWatch; New-DiagPackage | Out-Null }
-        'SelfTest'       { Invoke-SelfTest }
+# In library mode the file is dot-sourced by tests: functions are declared,
+# nothing is dispatched and no prompt waits for input.
+if ($env:GPU_DIAG_LIB -ne '1') {
+    try {
+        switch ($Mode) {
+            'Menu'           { Show-Menu }
+            'Report'         { New-DiagPackage | Out-Null }
+            'Fix'            { Invoke-Fix | Out-Null }
+            'Revert'         { Invoke-Revert }
+            'InstallWatch'   { Invoke-InstallWatch }
+            'UninstallWatch' { Invoke-UninstallWatch }
+            'Watch'          { Invoke-Watch }
+            'Finish'         { Invoke-UninstallWatch; New-DiagPackage | Out-Null }
+            'SelfTest'       { Invoke-SelfTest }
+        }
+    } catch {
+        Say (' [!] Unexpected error: ' + $_.Exception.Message)
+        Say ('     ' + $_.ScriptStackTrace)
     }
-} catch {
-    Say (' [!] Unexpected error: ' + $_.Exception.Message)
-    Say ('     ' + $_.ScriptStackTrace)
-}
 
-if (-not $NoPause -and $Mode -ne 'Watch') {
-    Say ''
-    Read-Host ' Press Enter to close this window' | Out-Null
+    if (-not $NoPause -and $Mode -ne 'Watch') {
+        Say ''
+        Read-Host ' Press Enter to close this window' | Out-Null
+    }
 }

@@ -8,6 +8,12 @@ $ErrorActionPreference = 'Stop'
 if (-not $OutDir) { $OutDir = Join-Path $PSScriptRoot 'dist' }
 $src = Join-Path $PSScriptRoot 'src'
 
+# Release commit date: the 1.5.5 milestone commit (2026-11-27 00:42 +03:00 =
+# 2026-11-26 21:42Z). Every archive entry gets this timestamp, so repeat builds
+# of the same three sources produce the same bytes regardless of checkout mtimes.
+# ZIP keeps no time zone and stores 2-second granularity; the stamp is written as-is.
+$EntryStamp = [DateTimeOffset]::Parse('2026-11-26T21:42:00Z', [Globalization.CultureInfo]::InvariantCulture)
+
 $required = 'GPU-Diag.ps1', 'START-HERE.bat', 'README-RU.txt'
 foreach ($f in $required) {
     if (-not (Test-Path (Join-Path $src $f))) { throw "Missing source file: src\$f" }
@@ -31,11 +37,7 @@ $zip = Join-Path $OutDir 'GPU-Diag.zip'
 if (Test-Path $zip) { Remove-Item $zip -Force }
 
 # Deterministic archive: all three entries get the same timestamp, the date of
-# the 1.5.4 release commit f6027f4 (2026-11-23 22:18:33 +03:00 = 19:18:33Z).
-# Source file mtimes are not stored, so repeat builds of the same three files
-# produce the same bytes regardless of when the files were checked out.
-# ZIP keeps no time zone; the stamp is written as-is (2-second granularity).
-$entryStamp = [DateTimeOffset]::Parse('2026-11-23T19:18:33Z', [Globalization.CultureInfo]::InvariantCulture)
+# the release commit (see $EntryStamp at the top).
 Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 
@@ -45,7 +47,7 @@ try {
     try {
         foreach ($f in ($required | Sort-Object)) {
             $entry = $archive.CreateEntry(('GPU-Diag\' + $f), [System.IO.Compression.CompressionLevel]::Optimal)
-            $entry.LastWriteTime = $entryStamp
+            $entry.LastWriteTime = $EntryStamp
             $inStream = [IO.File]::OpenRead((Join-Path $src $f))
             try {
                 $outStream = $entry.Open()
